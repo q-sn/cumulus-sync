@@ -31,14 +31,13 @@ Cumulus keeps a local copy of the vault on the phone or tablet and syncs it with
 
 **EU and US accounts.** Your pCloud region is detected when you sign in.
 
-**No middleman.** The plugin talks to pCloud directly. There are no servers of our own and no analytics.
+**No middleman.** Your files go straight between Obsidian and pCloud. There are no servers of our own and no analytics.
 
 ## How Obsidian pCloud sync works
 
 1. Sign in to pCloud from the plugin settings. This happens on pCloud's own page, and Cumulus never sees your password.
 2. Choose the folder in pCloud that contains your vault.
-3. Check the first-sync preview, which lists how many files will be downloaded, uploaded or kept as conflict copies, and confirm.
-4. After that, sync runs on its own while Obsidian is open, and the status bar shows its progress.
+3. That's it. The first sync starts right away and from then on runs on its own while Obsidian is open. A new phone simply gets the vault from pCloud; if both sides already have files, matching ones are recognised and differing ones are kept in both versions.
 
 Under the hood, Cumulus records the state of every file after each successful sync. On the next run it compares the phone and pCloud against that record rather than against each other. That's how it can tell an edit from a deletion, and a real conflict from a timestamp that drifted, which happens a lot on Android.
 
@@ -86,10 +85,11 @@ Not in the first version. Optional sync for snippets, themes and hotkeys is plan
 
 What the plugin does with your data, as required by the Obsidian developer policies:
 
-- It connects only to the pCloud API (`api.pcloud.com`, `eapi.pcloud.com`) and pCloud download servers.
+- Files and sync data go only to the pCloud API (`api.pcloud.com`, `eapi.pcloud.com`) and pCloud download servers.
+- Signing in opens pCloud's own page (`my.pcloud.com`) and then a small static page from this repository on GitHub Pages, which passes the result back to Obsidian.
 - It needs a pCloud account.
 - A pCloud access token can't be limited to a single folder, so technically it gives access to the whole account. Cumulus only reads and writes the vault folder you choose.
-- The token is kept in Obsidian's secret storage on your device. It's never written into the vault, and you can revoke it from the plugin settings.
+- The token is kept in Obsidian's secret storage on your device and is never written into the vault. *Disconnect* in the plugin settings signs the device out; you can also remove Cumulus's access any time in your pCloud account settings.
 - It contains no telemetry or analytics.
 
 ## Building from source
