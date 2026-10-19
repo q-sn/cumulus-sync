@@ -11,7 +11,8 @@
     "build": "npm run build:wasm && tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "test:rust": "cargo test",
     "spike": "npm run build:wasm && node esbuild.config.mjs spike && node scripts/.out/spike.mjs",
-    "test": "npm run build:wasm && esbuild tests/sync.test.ts --bundle --platform=node --format=esm --target=node20 --outfile=tests/.out/sync.test.mjs --loader:.wasm=binary --define:import.meta.url=\\\"\\\" --alias:obsidian=./tests/fake-obsidian.ts --log-level=warning && node --test tests/.out/sync.test.mjs"
+    "test": "npm run build:wasm && node esbuild.config.mjs test && node --test tests/.out/sync.test.mjs",
+    "version": "node scripts/version-bump.mjs && git add manifest.json versions.json"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

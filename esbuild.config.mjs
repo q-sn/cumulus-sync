@@ -15,14 +15,22 @@ const wasmBinary = {
 	},
 };
 
-if (mode === "spike") {
+// Node bundles: the API spike and the sync tests (with a fake obsidian module)
+const nodeBuilds = {
+	spike: { entryPoints: ["scripts/spike.ts"], outfile: "scripts/.out/spike.mjs" },
+	test: {
+		entryPoints: ["tests/sync.test.ts"],
+		outfile: "tests/.out/sync.test.mjs",
+		alias: { obsidian: "./tests/fake-obsidian.ts" },
+	},
+};
+if (mode in nodeBuilds) {
 	await esbuild.build({
-		entryPoints: ["scripts/spike.ts"],
+		...nodeBuilds[mode],
 		bundle: true,
 		platform: "node",
 		format: "esm",
 		target: "node20",
-		outfile: "scripts/.out/spike.mjs",
 		plugins: [wasmBinary],
 		define: { "import.meta.url": "\"\"" },
 		logLevel: "warning",
