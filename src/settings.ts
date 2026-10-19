@@ -1,6 +1,6 @@
-import { type App, FileSystemAdapter, Notice, Platform, type Plugin, PluginSettingTab, Setting } from "obsidian";
+import { type App, Notice, Platform, type Plugin, PluginSettingTab, Setting } from "obsidian";
 import type { AuthManager } from "./auth";
-import { defaultDeviceName, type Device } from "./device";
+import { defaultDeviceName, type Device, vaultInsidePCloudDrive } from "./device";
 import type { UserInfo } from "./pcloud/types";
 import type { CumulusSettings } from "./settings-data";
 import type { SyncController } from "./sync/controller";
@@ -108,29 +108,23 @@ export class CumulusSettingTab extends PluginSettingTab {
 		const { device, settings } = this.host;
 		new Setting(el).setName("This device").setHeading();
 
-		new Setting(el)
-			.setName("Vault folder in pCloud")
-			.setDesc(device.folder ? device.folder.path : "Not chosen yet")
-			.addButton((b) => b.setButtonText(device.folder ? "Change" : "Choose").onClick(() => this.host.pickFolder()));
-
 		const insideDrive = vaultInsidePCloudDrive(this.app);
-		const enable = new Setting(el)
-			.setName("Sync this vault")
+		const folder = new Setting(el)
+			.setName("Vault folder in pCloud")
 			.setDesc(
 				insideDrive
-					? "This vault seems to be inside pCloud Drive, which already syncs it. Turning Cumulus on here would sync the folder with itself."
-					: "Turn on once the folder above is right. The first sync shows a preview before changing anything.",
+					? "This vault is inside pCloud Drive, which already syncs it. Cumulus isn't needed on this computer."
+					: device.folder
+						? device.folder.path
+						: "Choose the folder that holds your vault. You'll see a preview before anything is synced.",
 			)
-			.addToggle((t) =>
-				t
-					.setValue(device.enabled)
-					.setDisabled(!device.folder)
-					.onChange((on) => {
-						device.update({ enabled: on });
-						if (on) void this.host.controller.sync("manual");
-					}),
+			.addButton((b) =>
+				b
+					.setButtonText(device.folder ? "Change" : "Choose")
+					.setDisabled(insideDrive)
+					.onClick(() => this.host.pickFolder()),
 			);
-		if (insideDrive) enable.descEl.addClass("mod-warning");
+		if (insideDrive) folder.descEl.addClass("mod-warning");
 
 		new Setting(el)
 			.setName("Device name")
@@ -147,8 +141,18 @@ export class CumulusSettingTab extends PluginSettingTab {
 	}
 
 	private syncSection(el: HTMLElement): void {
-		const { settings } = this.host;
+		const { settings, device } = this.host;
 		new Setting(el).setName("Sync").setHeading();
+
+		new Setting(el)
+			.setName("Pause sync")
+			.setDesc("Stops syncing on this device until you turn it back on. Nothing is deleted.")
+			.addToggle((t) =>
+				t.setValue(device.paused).onChange((paused) => {
+					device.update({ paused });
+					if (!paused) void this.host.controller.sync("manual");
+				}),
+			);
 
 		new Setting(el)
 			.setName("Sync automatically")
@@ -227,12 +231,6 @@ export class CumulusSettingTab extends PluginSettingTab {
 	}
 }
 
-function vaultInsidePCloudDrive(app: App): boolean {
-	const adapter = app.vault.adapter;
-	if (!Platform.isDesktopApp || !(adapter instanceof FileSystemAdapter)) return false;
-	const base = adapter.getBasePath();
-	return /pcloud ?drive/i.test(base) || /^p:[\\/]/i.test(base);
-}
 
 function message(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);

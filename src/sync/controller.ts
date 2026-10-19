@@ -92,8 +92,8 @@ export class SyncController {
 	private async run(reason: SyncReason): Promise<void> {
 		const client = this.auth.client();
 		const folder = this.device.folder;
-		if (!this.device.enabled || !client || !folder) {
-			this.set({ state: "setup", message: setupMessage(!!client, !!folder, this.device.enabled) });
+		if (this.device.paused || !client || !folder) {
+			this.set({ state: "setup", message: setupMessage(!!client, !!folder, this.device.paused) });
 			return;
 		}
 		try {
@@ -252,10 +252,10 @@ export class SyncController {
 	}
 }
 
-function setupMessage(connected: boolean, folder: boolean, enabled: boolean): string {
+function setupMessage(connected: boolean, folder: boolean, paused: boolean): string {
 	if (!connected) return "Connect pCloud in settings";
 	if (!folder) return "Choose a pCloud folder in settings";
-	if (!enabled) return "Sync is off on this device";
+	if (paused) return "Sync is paused on this device";
 	return "";
 }
 

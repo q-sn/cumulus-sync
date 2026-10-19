@@ -175,3 +175,5 @@ export class FakeApp {
 export class Notice {
 	constructor(_m: string) {}
 }
+
+export class FileSystemAdapter {}

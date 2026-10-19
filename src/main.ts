@@ -2,7 +2,7 @@ import { debounce, Notice, Platform, Plugin, type TAbstractFile } from "obsidian
 import { AuthManager } from "./auth";
 import { PROTOCOL_ACTION } from "./config";
 import { loadCore } from "./core";
-import { Device } from "./device";
+import { Device, vaultInsidePCloudDrive } from "./device";
 import { Log } from "./log";
 import { obsidianTransport } from "./pcloud/obsidian-transport";
 import { CumulusSettingTab } from "./settings";
@@ -92,12 +92,13 @@ export default class CumulusPlugin extends Plugin {
 
 	pickFolder(): void {
 		const client = this.auth.client();
-		if (!client) return;
+		if (!client || vaultInsidePCloudDrive(this.app)) return;
 		new FolderPickerModal(this.app, client, (folder) => {
-			const changed = folder.id !== this.device.folder?.id;
-			this.device.update({ folder });
-			if (changed) this.log.info(`vault folder set to ${folder.path}`);
+			this.device.update({ folder, paused: false });
+			this.log.info(`vault folder set to ${folder.path}`);
 			this.tab.display();
+			// first sync shows its preview before touching anything
+			void this.controller.sync("manual");
 		}).open();
 	}
 

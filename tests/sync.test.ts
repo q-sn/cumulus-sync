@@ -27,7 +27,7 @@ function phone(cloud: FakePCloud, mode: FirstSync = "merge", app = new FakeApp()
 	app.secrets.set("cumulus-pcloud-token", "test-token");
 	app.local.set("cumulus-pcloud-host", "eapi.pcloud.com");
 	const device = new Device(app as unknown as App);
-	device.update({ enabled: true, folder: { id: String(cloud.mkdirs(VAULT)), path: `/${VAULT}` } });
+	device.update({ folder: { id: String(cloud.mkdirs(VAULT)), path: `/${VAULT}` } });
 	const log = new Log();
 	const confirms: Plan[] = [];
 	const controller = new SyncController(

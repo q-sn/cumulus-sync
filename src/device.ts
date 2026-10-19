@@ -1,4 +1,4 @@
-import { type App, Platform } from "obsidian";
+import { type App, FileSystemAdapter, Platform } from "obsidian";
 
 const KEY = "cumulus-device";
 
@@ -10,7 +10,8 @@ export interface RemoteFolder {
 /** Per-device settings. data.json is shared through pCloud Drive on desktop, these must not be. */
 export interface DeviceConfig {
 	id: string;
-	enabled: boolean;
+	/** Sync runs once a folder is chosen, unless paused. */
+	paused: boolean;
 	folder: RemoteFolder | null;
 }
 
@@ -21,7 +22,7 @@ export class Device {
 		const saved = app.loadLocalStorage(KEY) as Partial<DeviceConfig> | null;
 		this.config = {
 			id: saved?.id ?? crypto.randomUUID(),
-			enabled: saved?.enabled ?? false,
+			paused: saved?.paused ?? false,
 			folder: saved?.folder ?? null,
 		};
 		if (!saved?.id) this.save();
@@ -31,8 +32,8 @@ export class Device {
 		return this.config.id;
 	}
 
-	get enabled(): boolean {
-		return this.config.enabled;
+	get paused(): boolean {
+		return this.config.paused;
 	}
 
 	get folder(): RemoteFolder | null {
@@ -55,4 +56,12 @@ export function defaultDeviceName(): string {
 	if (Platform.isMacOS) return "mac";
 	if (Platform.isWin) return "windows";
 	return "linux";
+}
+
+/** Syncing a vault that pCloud Drive already syncs would sync the folder with itself. */
+export function vaultInsidePCloudDrive(app: App): boolean {
+	const adapter = app.vault.adapter;
+	if (!Platform.isDesktopApp || !(adapter instanceof FileSystemAdapter)) return false;
+	const base = adapter.getBasePath();
+	return /pcloud ?drive/i.test(base) || /^p:[\\/]/i.test(base);
 }
