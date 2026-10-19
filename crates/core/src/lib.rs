@@ -3,6 +3,7 @@
 pub mod filter;
 pub mod path;
 pub mod pcloud;
+pub mod remote_tree;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
