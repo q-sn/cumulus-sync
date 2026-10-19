@@ -8,6 +8,8 @@ export function loadCore(): Promise<void> {
 	return ready;
 }
 
+export const Engine = wasm.Engine;
+export type Engine = wasm.Engine;
 export const coreVersion = wasm.coreVersion;
 export const pcloudError = wasm.pcloudError;
 export const pcloudMetadata = wasm.pcloudMetadata;

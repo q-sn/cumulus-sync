@@ -7,6 +7,7 @@ pub mod path;
 pub mod pcloud;
 pub mod planner;
 pub mod remote_tree;
+mod u64_str;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

@@ -4,6 +4,8 @@ use cumulus_core::pcloud::{self, ApiError, DiffEvent, ErrorClass, Metadata};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+mod engine;
+
 #[wasm_bindgen(js_name = coreVersion)]
 pub fn core_version() -> String {
     cumulus_core::VERSION.to_string()
@@ -84,14 +86,16 @@ struct WireDiffPage {
     entries: Vec<WireDiffEntry>,
 }
 
-fn to_json<T: Serialize>(value: &T) -> String {
+pub(crate) fn to_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).expect("wire types always serialize")
 }
 
+pub(crate) fn api_error(e: &ApiError) -> JsError {
+    JsError::new(&to_json(&WireError::from(e)))
+}
+
 fn wire<T: Serialize>(result: Result<T, ApiError>) -> Result<String, JsError> {
-    result
-        .map(|v| to_json(&v))
-        .map_err(|e| JsError::new(&to_json(&WireError::from(&e))))
+    result.map(|v| to_json(&v)).map_err(|e| api_error(&e))
 }
 
 #[wasm_bindgen(js_name = pcloudError)]

@@ -32,7 +32,9 @@ pub struct LocalStat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteStat {
+    #[serde(with = "crate::u64_str")]
     pub id: u64,
+    #[serde(with = "crate::u64_str")]
     pub hash: u64,
     pub size: u64,
     pub modified: i64,
@@ -89,12 +91,14 @@ pub enum FirstSync {
     PreferLocal,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct PlanInput {
     pub scope: Scope,
     pub local: LocalScan,
     pub first_sync: FirstSync,
     /// sha1 from `checksumfile`, by remote file id.
+    #[serde(deserialize_with = "remote_sha1")]
     pub remote_sha1: HashMap<u64, String>,
     /// Goes into conflict copy names, e.g. `2026-10-19 1432`.
     pub stamp: String,
@@ -226,4 +230,11 @@ pub enum PlanResult {
         remote: Vec<u64>,
     },
     Ready(Plan),
+}
+
+fn remote_sha1<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HashMap<u64, String>, D::Error> {
+    let raw = HashMap::<String, String>::deserialize(d)?;
+    raw.into_iter()
+        .map(|(k, v)| k.parse().map(|k| (k, v)).map_err(serde::de::Error::custom))
+        .collect()
 }
