@@ -85,8 +85,9 @@ Not in the first version. Optional sync for snippets, themes and hotkeys is plan
 
 - [x] Rust sync core compiled to WebAssembly, running on desktop and mobile
 - [x] pCloud API client, sign-in, EU and US regions
-- [ ] Sync engine: two-way sync, conflict copies, safety checks
-- [ ] First-sync preview, status bar, sync log
+- [x] Sync engine: two-way sync, conflict copies, safety checks
+- [x] First-sync preview, status bar, sync log
+- [ ] Testing on real devices
 - [ ] Public beta through BRAT
 - [ ] Rename detection and Markdown merging
 - [ ] Optional `.obsidian` sync
@@ -112,7 +113,8 @@ You'll need Rust with the `wasm32-unknown-unknown` target, [wasm-pack](https://r
 ```bash
 npm install
 npm run build
-npm run test:rust
+npm run test:rust   # sync engine
+npm test            # end-to-end sync against an in-memory pCloud
 ```
 
 The sync logic lives in `crates/core`. It's plain Rust with no I/O, so it can be tested without Obsidian. The TypeScript code in `src/` handles files, network requests and the UI.
