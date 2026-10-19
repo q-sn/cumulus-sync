@@ -10,9 +10,9 @@ export interface RemoteFolder {
 /** Per-device settings. data.json is shared through pCloud Drive on desktop, these must not be. */
 export interface DeviceConfig {
 	id: string;
-	/** Sync runs once a folder is chosen, unless paused. */
-	paused: boolean;
 	folder: RemoteFolder | null;
+	/** Shown in settings right away, before pCloud answers. */
+	email: string | null;
 }
 
 export class Device {
@@ -22,7 +22,7 @@ export class Device {
 		const saved = app.loadLocalStorage(KEY) as Partial<DeviceConfig> | null;
 		this.config = {
 			id: saved?.id ?? crypto.randomUUID(),
-			paused: saved?.paused ?? false,
+			email: saved?.email ?? null,
 			folder: saved?.folder ?? null,
 		};
 		if (!saved?.id) this.save();
@@ -32,8 +32,8 @@ export class Device {
 		return this.config.id;
 	}
 
-	get paused(): boolean {
-		return this.config.paused;
+	get email(): string | null {
+		return this.config.email;
 	}
 
 	get folder(): RemoteFolder | null {

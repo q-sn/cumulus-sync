@@ -1,17 +1,16 @@
-import type { App } from "obsidian";
+import { type App, Platform } from "obsidian";
 import type { AuthManager } from "../auth";
 import type { Engine } from "../core";
 import { defaultDeviceName, type Device } from "../device";
 import type { Log } from "../log";
 import type { PCloudClient } from "../pcloud/client";
 import { PCloudError } from "../pcloud/types";
-import { type CumulusSettings, maxFileSizeBytes } from "../settings-data";
 import { type ExecResult, Executor } from "./executor";
 import type { LocalVault } from "./local";
 import type { StateStore } from "./state";
-import type { FilterConfig, FirstSync, Plan, PlanInput, PlanResult, Scope } from "./types";
+import type { Action, FilterConfig, FirstSync, Plan, PlanInput, PlanResult, Scope } from "./types";
 
-export type SyncReason = "startup" | "resume" | "interval" | "edit" | "leave" | "manual" | "preview";
+export type SyncReason = "startup" | "resume" | "interval" | "edit" | "leave" | "manual";
 
 export type SyncState = "idle" | "syncing" | "offline" | "error" | "setup";
 
@@ -23,10 +22,10 @@ export interface SyncStatus {
 	conflicts: string[];
 }
 
-export interface Confirm {
-	/** Resolves with the first-sync mode to use, or null to cancel. */
-	(plan: Plan, firstSync: FirstSync): Promise<FirstSync | null>;
-}
+export type DeletedWhere = "local" | "remote" | "both";
+
+/** Many files are about to be deleted: true to go ahead, false to bring them back. */
+export type ConfirmDeletes = (count: number, where: DeletedWhere) => Promise<boolean>;
 
 const MAX_DIFF_PAGES = 20;
 const MAX_HASH_ROUNDS = 3;
@@ -45,8 +44,7 @@ export class SyncController {
 		private readonly store: StateStore,
 		private readonly local: LocalVault,
 		private readonly log: Log,
-		private readonly settings: () => CumulusSettings,
-		private readonly confirm: Confirm,
+		private readonly confirmDeletes: ConfirmDeletes,
 		private readonly onStatus: (s: SyncStatus) => void,
 	) {}
 
@@ -66,18 +64,11 @@ export class SyncController {
 		return this.dirty.size > 0;
 	}
 
-	/** Forgets all sync history on this device; the next sync is a first sync. */
-	async resetState(): Promise<void> {
-		await this.running;
-		this.engine = await this.store.clear(this.device.id);
-		this.log.warn("sync state reset");
-	}
-
 	sync(reason: SyncReason): Promise<void> {
 		if (this.running) {
 			// One follow-up run is enough to catch whatever happened meanwhile.
 			const quickQueued = !this.queued || this.queued === "edit" || this.queued === "leave";
-			if (reason !== "preview" && quickQueued) this.queued = reason;
+			if (quickQueued) this.queued = reason;
 			return this.running;
 		}
 		this.running = this.run(reason).finally(() => {
@@ -92,8 +83,8 @@ export class SyncController {
 	private async run(reason: SyncReason): Promise<void> {
 		const client = this.auth.client();
 		const folder = this.device.folder;
-		if (this.device.paused || !client || !folder) {
-			this.set({ state: "setup", message: setupMessage(!!client, !!folder, this.device.paused) });
+		if (!client || !folder) {
+			this.set({ state: "setup", message: client ? "Choose a pCloud folder in settings" : "Connect pCloud in settings" });
 			return;
 		}
 		try {
@@ -109,21 +100,17 @@ export class SyncController {
 			if (scope.type === "full") this.dirty.clear();
 			else for (const p of scope.paths) this.dirty.delete(p);
 
-			let firstSync: FirstSync = "merge";
+			// A fresh device takes the vault from pCloud; otherwise files that differ are kept twice.
+			const firstSync: FirstSync = engine.baseSize() === 0 && this.local.scan().files.length === 0 ? "preferRemote" : "merge";
 			let plan = await this.plan(engine, client, scope, firstSync);
-			if (plan.guard || reason === "preview") {
-				for (;;) {
-					this.set({ state: "syncing", message: "Waiting for confirmation", progress: null });
-					const chosen = await this.confirm(plan, firstSync);
-					if (!chosen) {
-						this.log.info("sync cancelled");
-						this.set({ state: "idle", message: "Sync cancelled" });
-						return;
-					}
-					if (chosen === firstSync) break;
-					// another first-sync mode was picked: show the plan it produces
-					firstSync = chosen;
-					plan = await this.plan(engine, client, scope, firstSync);
+			if (plan.guard?.kind === "massDelete") {
+				this.set({ state: "syncing", message: "Waiting for you", progress: null });
+				const deletes = plan.actions.filter((a) => a.kind === "deleteLocal" || a.kind === "deleteRemote");
+				const local = deletes.filter((a) => a.kind === "deleteLocal").length;
+				const where: DeletedWhere = local === 0 ? "local" : local === deletes.length ? "remote" : "both";
+				if (!(await this.confirmDeletes(deletes.length, where))) {
+					this.log.info(`restoring ${deletes.length} deleted files instead of deleting them`);
+					plan = { ...plan, actions: plan.actions.map(restore) };
 				}
 			}
 			for (const w of plan.warnings) this.log.warn(describeWarning(w));
@@ -181,7 +168,7 @@ export class SyncController {
 			firstSync,
 			remoteSha1: {},
 			stamp: stamp(new Date()),
-			device: this.settings().deviceName || defaultDeviceName(),
+			device: defaultDeviceName(),
 		};
 		for (let round = 0; round <= MAX_HASH_ROUNDS; round++) {
 			const result = JSON.parse(engine.plan(JSON.stringify(input))) as PlanResult;
@@ -214,7 +201,7 @@ export class SyncController {
 	private report(reason: SyncReason, r: ExecResult): void {
 		for (const s of r.skipped) this.log.info(`skipped ${s.path}: ${s.reason}`);
 		for (const f of r.failed) this.log.error(`${f.path}: ${f.error}`);
-		for (const c of r.conflicts) this.log.warn(`conflict in ${c}, the other version was saved next to it`);
+		for (const c of r.conflicts) this.log.warn(`${c} changed in two places, both versions kept`);
 		// Skipped files are looked at again on the next full sync.
 		for (const s of r.skipped) this.dirty.add(s.path);
 		this.log.info(`${reason} sync: ${r.done} done, ${r.skipped.length} skipped, ${r.failed.length} failed`);
@@ -242,8 +229,8 @@ export class SyncController {
 	}
 
 	private filter(): FilterConfig {
-		const s = this.settings();
-		return { configDir: this.app.vault.configDir, exclude: s.exclude, maxFileSize: maxFileSizeBytes(s) };
+		const mb = Platform.isMobileApp ? 25 : 200;
+		return { configDir: this.app.vault.configDir, exclude: [], maxFileSize: mb * 1024 * 1024 };
 	}
 
 	private set(patch: Partial<SyncStatus>): void {
@@ -252,11 +239,11 @@ export class SyncController {
 	}
 }
 
-function setupMessage(connected: boolean, folder: boolean, paused: boolean): string {
-	if (!connected) return "Connect pCloud in settings";
-	if (!folder) return "Choose a pCloud folder in settings";
-	if (paused) return "Sync is paused on this device";
-	return "";
+/** "Keep the files" for a planned delete: copy them back from the side that still has them. */
+function restore(a: Action): Action {
+	if (a.kind === "deleteRemote") return { kind: "download", path: a.path, remote: a.expect, replace: null };
+	if (a.kind === "deleteLocal") return { kind: "upload", path: a.path, sha1: null, local: a.expect, replace: null };
+	return a;
 }
 
 function describeWarning(w: Plan["warnings"][number]): string {

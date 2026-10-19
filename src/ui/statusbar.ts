@@ -32,7 +32,6 @@ export class StatusBar {
 }
 
 function label(s: SyncStatus): string {
-	const conflicts = s.conflicts.length ? ` · ${s.conflicts.length} conflict${s.conflicts.length > 1 ? "s" : ""}` : "";
 	switch (s.state) {
 		case "syncing":
 			return s.progress && s.progress.total > 0 ? `${s.progress.done}/${s.progress.total}` : "Syncing";
@@ -43,7 +42,7 @@ function label(s: SyncStatus): string {
 		case "setup":
 			return "Not set up";
 		case "idle":
-			return s.lastSync ? `Synced ${time(s.lastSync)}${conflicts}` : `Cumulus${conflicts}`;
+			return s.lastSync ? `Synced ${time(s.lastSync)}` : "Cumulus";
 	}
 }
 

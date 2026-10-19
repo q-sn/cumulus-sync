@@ -1,25 +1,16 @@
-import { type App, Notice, Platform, type Plugin, PluginSettingTab, Setting } from "obsidian";
+import { type App, Notice, type Plugin, PluginSettingTab, Setting } from "obsidian";
 import type { AuthManager } from "./auth";
-import { defaultDeviceName, type Device, vaultInsidePCloudDrive } from "./device";
+import { type Device, type RemoteFolder, vaultInsidePCloudDrive } from "./device";
 import type { UserInfo } from "./pcloud/types";
-import type { CumulusSettings } from "./settings-data";
-import type { SyncController } from "./sync/controller";
-
-const GB = 1024 ** 3;
 
 export interface SettingsHost {
 	auth: AuthManager;
 	device: Device;
-	settings: CumulusSettings;
-	controller: SyncController;
-	saveSettings(): Promise<void>;
-	pickFolder(): void;
-	showLog(): void;
+	/** Resolves once the picker is on screen. */
+	pickFolder(onPicked: (folder: RemoteFolder) => void): Promise<void>;
 }
 
 export class CumulusSettingTab extends PluginSettingTab {
-	private account: UserInfo | null = null;
-
 	constructor(
 		app: App,
 		plugin: Plugin,
@@ -31,207 +22,95 @@ export class CumulusSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		this.accountSection(containerEl);
-		if (!this.host.auth.client()) return;
-		this.deviceSection(containerEl);
-		this.syncSection(containerEl);
-		this.maintenanceSection(containerEl);
+		if (this.host.auth.client()) {
+			this.account(containerEl);
+			this.folder(containerEl);
+		} else {
+			this.connect(containerEl);
+		}
 	}
 
-	setAccount(info: UserInfo): void {
-		this.account = info;
+	/** After the obsidian:// sign-in callback. */
+	connected(info: UserInfo): void {
+		this.host.device.update({ email: info.email });
 		this.display();
 	}
 
-	private accountSection(el: HTMLElement): void {
+	private account(el: HTMLElement): void {
+		const { auth, device } = this.host;
+		const row = new Setting(el)
+			.setName("pCloud account")
+			.setDesc(device.email ?? "Connected")
+			.addButton((b) =>
+				b.setButtonText("Disconnect").onClick(async () => {
+					await auth.disconnect();
+					device.update({ email: null, folder: null });
+					this.display();
+				}),
+			);
+		// Refresh quietly; the cached email is already on screen.
+		auth.client()
+			?.userInfo()
+			.then((info) => {
+				if (info.email !== device.email) {
+					device.update({ email: info.email });
+					row.setDesc(info.email);
+				}
+			})
+			.catch(() => undefined);
+	}
+
+	private folder(el: HTMLElement): void {
+		const { device } = this.host;
+		const insideDrive = vaultInsidePCloudDrive(this.app);
+		const row = new Setting(el).setName("Vault folder in pCloud");
+		const describe = (folder: RemoteFolder | null) => {
+			if (insideDrive) row.setDesc("This vault is already synced by pCloud Drive, so Cumulus isn't needed here.");
+			else row.setDesc(folder ? folder.path : "Pick the folder that holds your vault.");
+		};
+		describe(device.folder);
+		row.addButton((b) => {
+			b.setButtonText(device.folder ? "Change" : "Choose").setDisabled(insideDrive);
+			if (!device.folder && !insideDrive) b.setCta();
+			b.onClick(async () => {
+				b.setDisabled(true);
+				await this.host.pickFolder((folder) => {
+					describe(folder);
+					b.setButtonText("Change").removeCta();
+				});
+				b.setDisabled(false);
+			});
+		});
+	}
+
+	private connect(el: HTMLElement): void {
 		const { auth } = this.host;
-		new Setting(el).setName("pCloud account").setHeading();
-		const client = auth.client();
-
-		if (client) {
-			const status = new Setting(el)
-				.setName("Connected")
-				.setDesc("Checking account…")
-				.addButton((b) =>
-					b
-						.setButtonText("Disconnect")
-						.setWarning()
-						.onClick(async () => {
-							await auth.disconnect();
-							this.account = null;
-							new Notice("Cumulus: disconnected from pCloud");
-							this.display();
-						}),
-				);
-			const describe = (info: UserInfo) =>
-				status.setDesc(
-					`${info.email} · ${(info.usedQuota / GB).toFixed(1)} of ${(info.quota / GB).toFixed(0)} GB used`,
-				);
-			if (this.account) describe(this.account);
-			else
-				client
-					.userInfo()
-					.then((info) => {
-						this.account = info;
-						describe(info);
-					})
-					.catch((e: unknown) => status.setDesc(`Cannot reach pCloud: ${message(e)}`));
-			return;
-		}
-
 		if (auth.canUseOAuth) {
 			new Setting(el)
-				.setName("Connect to pCloud")
-				.setDesc("Opens pCloud in your browser to grant access.")
+				.setName("pCloud account")
+				.setDesc("Sign in to pCloud to start syncing this vault.")
 				.addButton((b) => b.setButtonText("Connect").setCta().onClick(() => auth.startOAuth()));
 		}
 
 		let code = "";
 		new Setting(el)
-			.setName("Paste sign-in code")
-			.setDesc("If the browser did not return to Obsidian, paste the code shown on the sign-in page.")
+			.setName(auth.canUseOAuth ? "Sign-in code" : "pCloud account")
+			.setDesc(
+				auth.canUseOAuth
+					? "If the browser didn't bring you back to Obsidian, paste the code from the sign-in page."
+					: "Paste your pCloud sign-in code.",
+			)
 			.addText((t) => t.setPlaceholder("cumulus1:…").onChange((v) => (code = v)))
 			.addButton((b) =>
 				b.setButtonText("Connect").onClick(async () => {
+					b.setDisabled(true);
 					try {
-						this.account = await auth.connectWithCode(code);
-						new Notice(`Cumulus: connected as ${this.account.email}`);
-						this.display();
+						this.connected(await auth.connectWithCode(code));
 					} catch (e) {
-						new Notice(`Cumulus: ${message(e)}`);
+						new Notice(`Couldn't sign in: ${e instanceof Error ? e.message : String(e)}`);
+						b.setDisabled(false);
 					}
 				}),
 			);
 	}
-
-	private deviceSection(el: HTMLElement): void {
-		const { device, settings } = this.host;
-		new Setting(el).setName("This device").setHeading();
-
-		const insideDrive = vaultInsidePCloudDrive(this.app);
-		const folder = new Setting(el)
-			.setName("Vault folder in pCloud")
-			.setDesc(
-				insideDrive
-					? "This vault is inside pCloud Drive, which already syncs it. Cumulus isn't needed on this computer."
-					: device.folder
-						? device.folder.path
-						: "Choose the folder that holds your vault. You'll see a preview before anything is synced.",
-			)
-			.addButton((b) =>
-				b
-					.setButtonText(device.folder ? "Change" : "Choose")
-					.setDisabled(insideDrive)
-					.onClick(() => this.host.pickFolder()),
-			);
-		if (insideDrive) folder.descEl.addClass("mod-warning");
-
-		new Setting(el)
-			.setName("Device name")
-			.setDesc("Used in the names of conflict copies made on this device.")
-			.addText((t) =>
-				t
-					.setPlaceholder(defaultDeviceName())
-					.setValue(settings.deviceName)
-					.onChange(async (v) => {
-						settings.deviceName = v.trim();
-						await this.host.saveSettings();
-					}),
-			);
-	}
-
-	private syncSection(el: HTMLElement): void {
-		const { settings, device } = this.host;
-		new Setting(el).setName("Sync").setHeading();
-
-		new Setting(el)
-			.setName("Pause sync")
-			.setDesc("Stops syncing on this device until you turn it back on. Nothing is deleted.")
-			.addToggle((t) =>
-				t.setValue(device.paused).onChange((paused) => {
-					device.update({ paused });
-					if (!paused) void this.host.controller.sync("manual");
-				}),
-			);
-
-		new Setting(el)
-			.setName("Sync automatically")
-			.setDesc("When Obsidian opens, when you come back to it, shortly after edits and when you switch away.")
-			.addToggle((t) =>
-				t.setValue(settings.autoSync).onChange(async (v) => {
-					settings.autoSync = v;
-					await this.host.saveSettings();
-				}),
-			);
-
-		new Setting(el)
-			.setName("Sync every")
-			.setDesc("Minutes between syncs while Obsidian is open.")
-			.addDropdown((d) => {
-				for (const m of [1, 2, 5, 10, 15, 30, 60]) d.addOption(String(m), `${m} min`);
-				d.setValue(String(settings.intervalMinutes)).onChange(async (v) => {
-					settings.intervalMinutes = Number(v);
-					await this.host.saveSettings();
-				});
-			});
-
-		new Setting(el)
-			.setName("Largest file to sync, MB")
-			.setDesc(`Bigger files are skipped. Leave empty for the default (${Platform.isMobileApp ? 25 : 200} MB here).`)
-			.addText((t) =>
-				t
-					.setPlaceholder(String(Platform.isMobileApp ? 25 : 200))
-					.setValue(settings.maxFileSizeMb === null ? "" : String(settings.maxFileSizeMb))
-					.onChange(async (v) => {
-						const n = Number(v);
-						settings.maxFileSizeMb = v.trim() === "" || !Number.isFinite(n) || n <= 0 ? null : n;
-						await this.host.saveSettings();
-					}),
-			);
-
-		new Setting(el)
-			.setName("Don't sync")
-			.setDesc("One pattern per line, like .gitignore: Private/**, *.mp4, drafts/*.")
-			.addTextArea((t) =>
-				t.setValue(settings.exclude.join("\n")).onChange(async (v) => {
-					settings.exclude = v
-						.split("\n")
-						.map((l) => l.trim())
-						.filter(Boolean);
-					await this.host.saveSettings();
-				}),
-			);
-	}
-
-	private maintenanceSection(el: HTMLElement): void {
-		const { controller } = this.host;
-		new Setting(el).setName("Troubleshooting").setHeading();
-
-		new Setting(el)
-			.setName("Preview sync")
-			.setDesc("See what the next sync would do, then run it or cancel.")
-			.addButton((b) => b.setButtonText("Preview").onClick(() => void controller.sync("preview")));
-
-		new Setting(el).setName("Sync log").addButton((b) => b.setButtonText("Show").onClick(() => this.host.showLog()));
-
-		new Setting(el)
-			.setName("Forget sync history")
-			.setDesc(
-				"Treat the next sync as a first sync. Nothing is deleted, but files you deleted earlier may come back from pCloud.",
-			)
-			.addButton((b) =>
-				b
-					.setButtonText("Forget")
-					.setWarning()
-					.onClick(async () => {
-						await controller.resetState();
-						new Notice("Cumulus: sync history cleared");
-					}),
-			);
-	}
-}
-
-
-function message(e: unknown): string {
-	return e instanceof Error ? e.message : String(e);
 }

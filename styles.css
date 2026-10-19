@@ -21,12 +21,6 @@
 	}
 }
 
-.cumulus-plan-list {
-	max-height: 40vh;
-	overflow-y: auto;
-	font-size: var(--font-ui-small);
-}
-
 .cumulus-log {
 	max-height: 60vh;
 	overflow: auto;
@@ -35,6 +29,55 @@
 	user-select: text;
 }
 
-.mod-warning {
-	color: var(--text-warning);
+.cumulus-picker-path {
+	margin-bottom: var(--size-4-2);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	overflow-wrap: anywhere;
+}
+
+.cumulus-picker-crumb:not(.is-current) {
+	cursor: pointer;
+	color: var(--text-accent);
+}
+
+.cumulus-picker-crumb.is-current {
+	color: var(--text-normal);
+}
+
+/* fixed height so the dialog doesn't change size while browsing */
+.cumulus-picker-list {
+	height: min(50vh, 360px);
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	transition: opacity 120ms ease-in-out;
+}
+
+.cumulus-picker-list.is-loading {
+	opacity: 0.5;
+	pointer-events: none;
+}
+
+.cumulus-picker-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: var(--size-4-2) var(--size-4-3);
+	cursor: pointer;
+}
+
+.cumulus-picker-row:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.cumulus-picker-icon {
+	display: inline-flex;
+	color: var(--text-muted);
+}
+
+.cumulus-picker-empty {
+	padding: var(--size-4-4);
+	color: var(--text-faint);
+	text-align: center;
 }

@@ -5,11 +5,9 @@ import { AuthManager } from "../src/auth";
 import { loadCore } from "../src/core";
 import { Device } from "../src/device";
 import { Log } from "../src/log";
-import { DEFAULT_SETTINGS } from "../src/settings-data";
-import { SyncController } from "../src/sync/controller";
+import { type DeletedWhere, SyncController } from "../src/sync/controller";
 import { LocalVault } from "../src/sync/local";
 import { StateStore } from "../src/sync/state";
-import type { FirstSync, Plan } from "../src/sync/types";
 import { FakeApp } from "./fake-obsidian";
 import { FakePCloud } from "./fake-pcloud";
 
@@ -18,18 +16,21 @@ const VAULT = "Notes/Vault";
 interface Phone {
 	app: FakeApp;
 	log: Log;
-	confirms: Plan[];
+	/** Mass-delete questions asked so far. */
+	asked: { count: number; where: DeletedWhere }[];
+	/** Answer to the next mass-delete question: delete (true) or keep the files. */
+	allowDeletes: boolean;
 	sync(): Promise<void>;
 	restart(): Phone;
 }
 
-function phone(cloud: FakePCloud, mode: FirstSync = "merge", app = new FakeApp()): Phone {
+function phone(cloud: FakePCloud, app = new FakeApp()): Phone {
 	app.secrets.set("cumulus-pcloud-token", "test-token");
 	app.local.set("cumulus-pcloud-host", "eapi.pcloud.com");
 	const device = new Device(app as unknown as App);
 	device.update({ folder: { id: String(cloud.mkdirs(VAULT)), path: `/${VAULT}` } });
 	const log = new Log();
-	const confirms: Plan[] = [];
+	const asked: Phone["asked"] = [];
 	const controller = new SyncController(
 		app as unknown as App,
 		new AuthManager(app as unknown as App, cloud.transport),
@@ -37,24 +38,25 @@ function phone(cloud: FakePCloud, mode: FirstSync = "merge", app = new FakeApp()
 		new StateStore(app.vault.adapter as never, ".obsidian/plugins/cumulus-sync"),
 		new LocalVault(app as unknown as App),
 		log,
-		() => DEFAULT_SETTINGS,
-		async (plan) => {
-			confirms.push(plan);
-			return mode;
+		async (count, where) => {
+			asked.push({ count, where });
+			return self.allowDeletes;
 		},
 		() => undefined,
 	);
-	return {
+	const self: Phone = {
 		app,
 		log,
-		confirms,
+		asked,
+		allowDeletes: true,
 		async sync() {
 			await controller.sync("manual");
 			const failed = controller.current.state === "error";
 			assert.ok(!failed, `sync failed: ${controller.current.message}\n${log.all().map((e) => e.message).join("\n")}`);
 		},
-		restart: () => phone(cloud, mode, app),
+		restart: () => phone(cloud, app),
 	};
+	return self;
 }
 
 /** The summary line the controller logs after each sync. */
@@ -72,12 +74,11 @@ describe("sync against a fake pCloud", () => {
 		cloud.put(`${VAULT}/Welcome.md`, "hello");
 		cloud.put(`${VAULT}/Projects/Plan.md`, "plan");
 		cloud.put(`${VAULT}/img/cat.png`, "\u0000\u0001binary");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 
 		await p.sync();
-		// merge plan first, then the preferRemote plan after switching modes
-		assert.equal(p.confirms.length, 2);
-		assert.ok(p.confirms[1]?.actions.every((a) => a.kind === "download"));
+		assert.equal(p.asked.length, 0, "a first sync asks nothing");
+		assert.ok(!p.app.vault.paths().some((x) => x.includes("conflict")));
 		assert.deepEqual(p.app.vault.paths(), ["Projects/Plan.md", "Welcome.md", "img/cat.png"]);
 		assert.equal(p.app.vault.text("Projects/Plan.md"), "plan");
 
@@ -89,7 +90,7 @@ describe("sync against a fake pCloud", () => {
 		const cloud = new FakePCloud();
 		cloud.put(`${VAULT}/a.md`, "one");
 		cloud.put(`${VAULT}/b.md`, "two");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 
 		p.app.vault.write("a.md", "one, edited on the phone");
@@ -112,7 +113,7 @@ describe("sync against a fake pCloud", () => {
 		cloud.put(`${VAULT}/keep.md`, "k");
 		cloud.put(`${VAULT}/gone-on-phone.md`, "x");
 		cloud.put(`${VAULT}/gone-on-desktop.md`, "y");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 
 		p.app.vault.remove("gone-on-phone.md");
@@ -128,7 +129,7 @@ describe("sync against a fake pCloud", () => {
 	test("an edit wins over a delete", async () => {
 		const cloud = new FakePCloud();
 		cloud.put(`${VAULT}/a.md`, "a");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 
 		p.app.vault.remove("a.md");
@@ -141,7 +142,7 @@ describe("sync against a fake pCloud", () => {
 	test("a conflict keeps both versions", async () => {
 		const cloud = new FakePCloud();
 		cloud.put(`${VAULT}/a.md`, "base");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 
 		p.app.vault.write("a.md", "phone version");
@@ -161,12 +162,11 @@ describe("sync against a fake pCloud", () => {
 	test("state survives a restart", async () => {
 		const cloud = new FakePCloud();
 		cloud.put(`${VAULT}/a.md`, "a");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 
 		const again = p.restart();
 		await again.sync();
-		assert.equal(again.confirms.length, 0, "no first-sync prompt after a restart");
 		assert.match(lastRun(again), /0 done/);
 	});
 
@@ -174,7 +174,7 @@ describe("sync against a fake pCloud", () => {
 		const cloud = new FakePCloud();
 		cloud.put(`${VAULT}/same.md`, "same text");
 		cloud.put(`${VAULT}/different.md`, "cloud text");
-		const p = phone(cloud, "merge");
+		const p = phone(cloud);
 		p.app.vault.write("same.md", "same text");
 		p.app.vault.write("different.md", "phone text!");
 		await p.sync();
@@ -189,7 +189,7 @@ describe("sync against a fake pCloud", () => {
 		const cloud = new FakePCloud();
 		cloud.put(`${VAULT}/a.md`, "a");
 		cloud.put("Elsewhere/Archive/old.md", "old");
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 
 		cloud.moveFolder("Elsewhere/Archive", VAULT);
@@ -200,10 +200,24 @@ describe("sync against a fake pCloud", () => {
 	test("mass delete asks first", async () => {
 		const cloud = new FakePCloud();
 		for (let i = 0; i < 20; i++) cloud.put(`${VAULT}/n${i}.md`, `note ${i}`);
-		const p = phone(cloud, "preferRemote");
+		const p = phone(cloud);
 		await p.sync();
 		for (let i = 0; i < 15; i++) p.app.vault.remove(`n${i}.md`);
 		await p.sync();
-		assert.equal(p.confirms.at(-1)?.guard?.kind, "massDelete");
+		assert.deepEqual(p.asked, [{ count: 15, where: "local" }]);
+		assert.equal(cloud.paths(VAULT).length, 5);
+	});
+
+	test("keeping files after a mass delete brings them back", async () => {
+		const cloud = new FakePCloud();
+		for (let i = 0; i < 20; i++) cloud.put(`${VAULT}/n${i}.md`, `note ${i}`);
+		const p = phone(cloud);
+		await p.sync();
+		for (let i = 0; i < 15; i++) cloud.remove(`${VAULT}/n${i}.md`);
+		p.allowDeletes = false;
+		await p.sync();
+		assert.deepEqual(p.asked, [{ count: 15, where: "remote" }]);
+		assert.equal(p.app.vault.paths().length, 20);
+		assert.equal(cloud.paths(VAULT).length, 20, "restored in pCloud from this device");
 	});
 });

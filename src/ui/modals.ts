@@ -1,110 +1,43 @@
-import { type App, Modal, Notice, Setting } from "obsidian";
+import { type App, Modal, Notice, Setting, setIcon } from "obsidian";
+import type { RemoteFolder } from "../device";
 import type { Log } from "../log";
 import type { PCloudClient } from "../pcloud/client";
 import type { RemoteMetadata } from "../pcloud/types";
-import type { RemoteFolder } from "../device";
-import type { Action, FirstSync, Plan } from "../sync/types";
+import type { DeletedWhere } from "../sync/controller";
 
-const LABELS: Record<Action["kind"], string> = {
-	upload: "Upload",
-	download: "Download",
-	conflict: "Conflict",
-	deleteLocal: "Delete on this device",
-	deleteRemote: "Delete in pCloud",
-	renameLocal: "Rename on this device",
-	renameRemote: "Rename in pCloud",
-	adopt: "Already the same",
-	forget: "Stop tracking",
+const DELETE_TEXT: Record<DeletedWhere, (n: number) => string> = {
+	local: (n) => `${n} files were deleted on this device. Delete them from pCloud too?`,
+	remote: (n) => `${n} files were deleted in pCloud. Delete them on this device too?`,
+	both: (n) => `${n} files were deleted. Delete them everywhere?`,
 };
 
-const FIRST_SYNC: Record<FirstSync, { name: string; desc: string }> = {
-	merge: {
-		name: "Merge",
-		desc: "Keep files from both sides. Files that differ are kept twice, as conflict copies.",
-	},
-	preferRemote: {
-		name: "pCloud wins",
-		desc: "Use the pCloud version where both sides have the file. Best for a new phone or tablet.",
-	},
-	preferLocal: {
-		name: "This device wins",
-		desc: "Use the version on this device where both sides have the file.",
-	},
-};
+export class DeleteModal extends Modal {
+	private answer = false;
 
-const SHOWN = 200;
-
-export class PlanModal extends Modal {
-	private choice: FirstSync | null = null;
-
-	constructor(
+	private constructor(
 		app: App,
-		private readonly plan: Plan,
-		private mode: FirstSync,
-		private readonly resolve: (mode: FirstSync | null) => void,
+		private readonly count: number,
+		private readonly where: DeletedWhere,
+		private readonly resolve: (remove: boolean) => void,
 	) {
 		super(app);
 	}
 
-	static ask(app: App, plan: Plan, mode: FirstSync): Promise<FirstSync | null> {
-		return new Promise((resolve) => new PlanModal(app, plan, mode, resolve).open());
+	static ask(app: App, count: number, where: DeletedWhere): Promise<boolean> {
+		return new Promise((resolve) => new DeleteModal(app, count, where, resolve).open());
 	}
 
 	onOpen(): void {
-		const { contentEl } = this;
-		const { actions, guard, warnings } = this.plan;
-		const first = guard?.kind === "firstSync";
-		this.setTitle(first ? "First sync with pCloud" : guard ? "Confirm sync" : "Sync preview");
-
-		if (guard?.kind === "massDelete") {
-			contentEl.createEl("p", {
-				text: `This sync would delete ${guard.count} files. That usually means a folder was removed or moved. Check the list before going on.`,
-				cls: "mod-warning",
-			});
-		}
-		if (first) {
-			contentEl.createEl("p", { text: "Here is what happens when this device and pCloud are joined for the first time." });
-			new Setting(contentEl)
-				.setName("When a file exists on both sides")
-				.setDesc(FIRST_SYNC[this.mode].desc)
-				.addDropdown((d) => {
-					for (const [key, v] of Object.entries(FIRST_SYNC)) d.addOption(key, v.name);
-					d.setValue(this.mode).onChange((v) => {
-						// Re-planning happens in the controller; close and come back with the new plan.
-						this.choice = v as FirstSync;
-						this.close();
-					});
-				});
-		}
-
-		const counts = new Map<Action["kind"], number>();
-		for (const a of actions) counts.set(a.kind, (counts.get(a.kind) ?? 0) + 1);
-		const summary = contentEl.createEl("ul");
-		if (actions.length === 0) summary.createEl("li", { text: "Nothing to do, everything is in sync." });
-		for (const [kind, n] of counts) {
-			if (kind !== "adopt" && kind !== "forget") summary.createEl("li", { text: `${LABELS[kind]}: ${n}` });
-		}
-		if (warnings.length) summary.createEl("li", { text: `Not synced, see log: ${warnings.length}` });
-
-		const visible = actions.filter((a) => a.kind !== "adopt" && a.kind !== "forget");
-		if (visible.length) {
-			const details = contentEl.createEl("details");
-			details.createEl("summary", { text: "Files" });
-			const list = details.createEl("ul", { cls: "cumulus-plan-list" });
-			for (const a of visible.slice(0, SHOWN)) {
-				list.createEl("li", { text: `${LABELS[a.kind]}: ${"path" in a ? a.path : `${a.from} → ${a.to}`}` });
-			}
-			if (visible.length > SHOWN) list.createEl("li", { text: `and ${visible.length - SHOWN} more` });
-		}
-
-		new Setting(contentEl)
-			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
+		this.setTitle(`Delete ${this.count} files?`);
+		this.contentEl.createEl("p", { text: DELETE_TEXT[this.where](this.count) });
+		new Setting(this.contentEl)
+			.addButton((b) => b.setButtonText("Keep files").setCta().onClick(() => this.close()))
 			.addButton((b) =>
 				b
-					.setButtonText(actions.length ? "Sync" : "Done")
-					.setCta()
+					.setButtonText("Delete")
+					.setWarning()
 					.onClick(() => {
-						this.choice = this.mode;
+						this.answer = true;
 						this.close();
 					}),
 			);
@@ -112,88 +45,126 @@ export class PlanModal extends Modal {
 
 	onClose(): void {
 		this.contentEl.empty();
-		this.resolve(this.choice);
+		// Closing without choosing keeps the files.
+		this.resolve(this.answer);
 	}
 }
 
-export class FolderPickerModal extends Modal {
-	private stack: { id: string; name: string }[] = [{ id: "0", name: "pCloud" }];
+interface Level {
+	id: string;
+	name: string;
+	folders: RemoteMetadata[];
+}
 
-	constructor(
+export class FolderPickerModal extends Modal {
+	private stack: Level[];
+	private cache = new Map<string, RemoteMetadata[]>();
+	private crumbs!: HTMLElement;
+	private list!: HTMLElement;
+	private useButton!: HTMLButtonElement;
+	private busy = false;
+
+	private constructor(
 		app: App,
 		private readonly client: PCloudClient,
+		root: RemoteMetadata[],
 		private readonly onPick: (folder: RemoteFolder) => void,
 	) {
 		super(app);
+		this.stack = [{ id: "0", name: "pCloud", folders: root }];
+		this.cache.set("0", root);
+	}
+
+	/** Loads the top level first, so the dialog opens with content instead of filling in. */
+	static async open(app: App, client: PCloudClient, onPick: (folder: RemoteFolder) => void): Promise<void> {
+		try {
+			const root = folders(await client.listFolder("0"));
+			new FolderPickerModal(app, client, root, onPick).open();
+		} catch (e) {
+			new Notice(`Couldn't open pCloud: ${e instanceof Error ? e.message : String(e)}`);
+		}
 	}
 
 	onOpen(): void {
-		this.setTitle("Choose your vault folder in pCloud");
-		void this.render();
+		this.setTitle("Choose your vault folder");
+		this.modalEl.addClass("cumulus-picker");
+		this.crumbs = this.contentEl.createDiv({ cls: "cumulus-picker-path" });
+		this.list = this.contentEl.createDiv({ cls: "cumulus-picker-list" });
+		const footer = this.contentEl.createDiv({ cls: "modal-button-container" });
+		this.useButton = footer.createEl("button", { text: "Use this folder", cls: "mod-cta" });
+		this.useButton.addEventListener("click", () => this.pick());
+		this.render();
 	}
 
-	private get path(): string {
-		return this.stack
-			.slice(1)
-			.map((f) => f.name)
-			.join("/");
+	onClose(): void {
+		this.contentEl.empty();
 	}
 
-	private async render(): Promise<void> {
-		const { contentEl } = this;
-		contentEl.empty();
-		const here = this.stack[this.stack.length - 1];
-		if (!here) return;
-		contentEl.createEl("p", { text: `/${this.path}` });
+	private get here(): Level {
+		return this.stack[this.stack.length - 1] as Level;
+	}
 
-		let folder: RemoteMetadata;
+	private render(): void {
+		this.crumbs.empty();
+		this.stack.forEach((level, i) => {
+			if (i > 0) this.crumbs.createSpan({ text: " / ", cls: "cumulus-picker-sep" });
+			const crumb = this.crumbs.createSpan({ text: level.name, cls: "cumulus-picker-crumb" });
+			if (i < this.stack.length - 1) crumb.addEventListener("click", () => this.goTo(i));
+			else crumb.addClass("is-current");
+		});
+
+		const rows = this.here.folders.map((f) => {
+			const row = createDiv({ cls: "cumulus-picker-row" });
+			setIcon(row.createSpan({ cls: "cumulus-picker-icon" }), "folder");
+			row.createSpan({ text: f.name });
+			row.addEventListener("click", () => void this.enter(f));
+			return row;
+		});
+		if (rows.length === 0) rows.push(createDiv({ text: "No folders here", cls: "cumulus-picker-empty" }));
+		this.list.replaceChildren(...rows);
+		this.list.scrollTop = 0;
+		this.useButton.disabled = this.stack.length === 1;
+	}
+
+	private async enter(f: RemoteMetadata): Promise<void> {
+		if (this.busy) return;
+		this.busy = true;
+		this.list.addClass("is-loading");
 		try {
-			folder = await this.client.listFolder(here.id);
+			let children = this.cache.get(f.id);
+			if (!children) {
+				children = folders(await this.client.listFolder(f.id));
+				this.cache.set(f.id, children);
+			}
+			this.stack.push({ id: f.id, name: f.name, folders: children });
+			this.render();
 		} catch (e) {
-			contentEl.createEl("p", { text: `Cannot list this folder: ${e instanceof Error ? e.message : String(e)}` });
-			return;
-		}
-		const items = folder.contents ?? [];
-		const subfolders = items.filter((m) => m.isFolder).sort((a, b) => a.name.localeCompare(b.name));
-		const looksLikeVault = items.some((m) => m.isFolder && m.name === this.app.vault.configDir);
-
-		if (this.stack.length > 1) {
-			new Setting(contentEl).setName("..").addButton((b) =>
-				b.setButtonText("Up").onClick(() => {
-					this.stack.pop();
-					void this.render();
-				}),
-			);
-		}
-		for (const f of subfolders) {
-			new Setting(contentEl).setName(f.name).addButton((b) =>
-				b.setButtonText("Open").onClick(() => {
-					this.stack.push({ id: f.id, name: f.name });
-					void this.render();
-				}),
-			);
-		}
-		if (subfolders.length === 0) contentEl.createEl("p", { text: "No subfolders." });
-
-		const pick = new Setting(contentEl)
-			.setName(this.stack.length === 1 ? "The root of pCloud can't be used" : `Use /${this.path}`)
-			.setDesc(
-				looksLikeVault
-					? "This folder contains an Obsidian vault."
-					: `${items.length} items. No ${this.app.vault.configDir} folder here, so it may not be a vault.`,
-			);
-		if (this.stack.length > 1) {
-			pick.addButton((b) =>
-				b
-					.setButtonText("Use this folder")
-					.setCta()
-					.onClick(() => {
-						this.onPick({ id: here.id, path: `/${this.path}` });
-						this.close();
-					}),
-			);
+			new Notice(`Couldn't open ${f.name}: ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			this.busy = false;
+			this.list.removeClass("is-loading");
 		}
 	}
+
+	private goTo(index: number): void {
+		if (this.busy) return;
+		this.stack = this.stack.slice(0, index + 1);
+		this.render();
+	}
+
+	private pick(): void {
+		if (this.stack.length === 1) return;
+		const path = `/${this.stack
+			.slice(1)
+			.map((l) => l.name)
+			.join("/")}`;
+		this.onPick({ id: this.here.id, path });
+		this.close();
+	}
+}
+
+function folders(listing: RemoteMetadata): RemoteMetadata[] {
+	return (listing.contents ?? []).filter((m) => m.isFolder).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export class LogModal extends Modal {
@@ -205,22 +176,20 @@ export class LogModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.setTitle("Cumulus sync log");
+		this.setTitle("Sync log");
 		const entries = [...this.log.all()].reverse();
 		if (entries.length === 0) {
-			this.contentEl.createEl("p", { text: "Nothing logged yet." });
+			this.contentEl.createEl("p", { text: "Nothing yet." });
 			return;
 		}
 		const pre = this.contentEl.createEl("pre", { cls: "cumulus-log" });
 		pre.setText(
-			entries
-				.map((e) => `${new Date(e.time).toLocaleTimeString()} ${e.level.padEnd(5)} ${e.message}`)
-				.join("\n"),
+			entries.map((e) => `${new Date(e.time).toLocaleTimeString()} ${e.level.padEnd(5)} ${e.message}`).join("\n"),
 		);
 		new Setting(this.contentEl).addButton((b) =>
 			b.setButtonText("Copy").onClick(async () => {
 				await navigator.clipboard.writeText(pre.getText());
-				new Notice("Log copied");
+				new Notice("Copied");
 			}),
 		);
 	}
