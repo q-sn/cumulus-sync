@@ -1,0 +1,40 @@
+.cumulus-status {
+	gap: 4px;
+}
+
+.cumulus-status-icon {
+	display: inline-flex;
+}
+
+.cumulus-status-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.cumulus-status.is-syncing .cumulus-status-icon svg {
+	animation: cumulus-spin 1.2s linear infinite;
+}
+
+@keyframes cumulus-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.cumulus-plan-list {
+	max-height: 40vh;
+	overflow-y: auto;
+	font-size: var(--font-ui-small);
+}
+
+.cumulus-log {
+	max-height: 60vh;
+	overflow: auto;
+	font-size: var(--font-ui-smaller);
+	white-space: pre-wrap;
+	user-select: text;
+}
+
+.mod-warning {
+	color: var(--text-warning);
+}
