@@ -6,7 +6,7 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "build:wasm": "wasm-pack build crates/wasm --target web --release --out-dir pkg",
+    "build:wasm": "wasm-pack --log-level warn build crates/wasm --target web --release --out-dir pkg",
     "dev": "npm run build:wasm && node esbuild.config.mjs",
     "build": "npm run build:wasm && tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "test:rust": "cargo test",
