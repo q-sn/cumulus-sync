@@ -36,10 +36,12 @@ impl ApiError {
     }
 
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self.class(),
-            ErrorClass::Retry | ErrorClass::RateLimit | ErrorClass::Temporary
-        )
+        // 4000 is "too many login attempts", waiting a few seconds won't help
+        self.code != 4000
+            && matches!(
+                self.class(),
+                ErrorClass::Retry | ErrorClass::RateLimit | ErrorClass::Temporary
+            )
     }
 
     pub fn is_not_found(&self) -> bool {

@@ -34,8 +34,12 @@ pub fn plan(input: &PlanInput, tree: &RemoteTree, base: &Baseline, filter: &Filt
             .push((p.as_str(), *f));
     }
     let local_folders: HashSet<String> = input.local.folders.iter().map(|p| path::key(p)).collect();
+    let remote_folder_paths = tree.folder_paths();
     let remote_folders: HashSet<String> =
-        tree.folder_paths().iter().map(|p| path::key(p)).collect();
+        remote_folder_paths.iter().map(|p| path::key(p)).collect();
+    // `Notes` and `notes` side by side would be merged into one folder on Android.
+    let folder_collisions = colliding(remote_folder_paths.iter().chain(&input.local.folders));
+    let mut warned_folders: HashSet<&str> = HashSet::new();
 
     let scope: Option<HashSet<String>> = match &input.scope {
         Scope::Full => None,
@@ -58,6 +62,14 @@ pub fn plan(input: &PlanInput, tree: &RemoteTree, base: &Baseline, filter: &Filt
 
     for key in keys {
         if scope.as_ref().is_some_and(|s| !s.contains(key)) {
+            continue;
+        }
+        if let Some(folder) = inside_any(key, &folder_collisions) {
+            if warned_folders.insert(folder) {
+                warnings.push(Warning::Collision {
+                    paths: folder_collisions[folder].iter().cloned().collect(),
+                });
+            }
             continue;
         }
         let locals = local.get(key).map(Vec::as_slice).unwrap_or_default();
@@ -144,7 +156,7 @@ pub fn plan(input: &PlanInput, tree: &RemoteTree, base: &Baseline, filter: &Filt
     let deletes = actions.iter().filter(|a| a.is_delete()).count();
     let guard = if base.is_empty() && !actions.is_empty() {
         Some(Guard::FirstSync)
-    } else if deletes >= 10 && (deletes > 50 || deletes * 5 > base.len()) {
+    } else if deletes > 50 || (deletes >= 3 && deletes * 4 > base.len()) {
         Some(Guard::MassDelete { count: deletes })
     } else {
         None
@@ -163,42 +175,47 @@ fn decide(
     r: Option<(&str, &RemoteFile)>,
     b: Option<&BaseEntry>,
 ) {
-    let path = match (l, r) {
+    // Local operations use the local spelling, remote ones the remote spelling.
+    let (path, rpath) = match (l, r) {
         // Only the Unicode form differs (macOS NFD vs NFC): not a rename.
-        (Some(l), Some((rpath, _))) if path::normalize(&l.path) == path::normalize(rpath) => {
-            rpath.to_string()
+        (Some(l), Some((rp, _))) if path::normalize(&l.path) == path::normalize(rp) => {
+            (l.path.clone(), rp.to_string())
         }
-        (Some(l), Some((rpath, rf))) => {
+        (Some(l), Some((rp, rf))) => {
             // Same key, different spelling: a case-only rename on one side.
-            let local_renamed = b.is_some_and(|b| b.path == rpath && b.path != l.path);
+            let local_renamed = b.is_some_and(|b| b.path == rp && b.path != l.path);
             if local_renamed {
                 out.push(Action::RenameRemote {
-                    from: rpath.to_string(),
+                    from: rp.to_string(),
                     to: l.path.clone(),
                     expect: rf.into(),
                 });
-                l.path.clone()
+                (l.path.clone(), l.path.clone())
             } else {
                 out.push(Action::RenameLocal {
                     from: l.path.clone(),
-                    to: rpath.to_string(),
+                    to: rp.to_string(),
                     expect: l.into(),
                 });
-                rpath.to_string()
+                (rp.to_string(), rp.to_string())
             }
         }
-        (Some(l), _) => l.path.clone(),
-        (_, Some((rpath, _))) => rpath.to_string(),
-        (None, None) => b.map(|b| b.path.clone()).unwrap_or_default(),
+        (Some(l), None) => (l.path.clone(), l.path.clone()),
+        (None, Some((rp, _))) => (rp.to_string(), rp.to_string()),
+        (None, None) => {
+            let p = b.map(|b| b.path.clone()).unwrap_or_default();
+            (p.clone(), p)
+        }
     };
+    let names = Names { path, rpath };
     let ls = l.map(LocalStat::from);
     let rs = r.map(|(_, f)| RemoteStat::from(f));
 
     let Some(b) = b else {
         match (l, r) {
-            (Some(l), None) => out.push(upload(path, l, None)),
-            (None, Some(_)) => out.push(download(path, rs, None)),
-            (Some(l), Some((_, rf))) => both_present(ctx, out, path, l, rf, false),
+            (Some(l), None) => out.push(upload(names, l, None)),
+            (None, Some(_)) => out.push(download(names.path, rs, None)),
+            (Some(l), Some((_, rf))) => both_present(ctx, out, names, l, rf, false),
             (None, None) => {}
         }
         return;
@@ -212,7 +229,7 @@ fn decide(
                 ctx.need_local.insert(l.path.clone());
                 return;
             }
-            Some(h) if *h == b.sha1 => State::Stale,
+            Some(h) if h.eq_ignore_ascii_case(&b.sha1) => State::Stale,
             Some(_) => State::Changed,
         },
     };
@@ -227,26 +244,26 @@ fn decide(
     match (local_state, remote_state) {
         (Unchanged, Unchanged) => {}
         (Unchanged | Stale, Unchanged | Stale) => out.push(Action::Adopt {
-            path,
+            path: names.path,
             sha1: b.sha1.clone(),
             local: ls.unwrap_or(b.local),
             remote: rs.unwrap_or(b.remote),
         }),
-        (Changed, Unchanged | Stale) => out.push(upload(path, l.unwrap(), rs)),
-        (Unchanged | Stale, Changed) => out.push(download(path, rs, ls)),
-        (Changed, Changed) => both_present(ctx, out, path, l.unwrap(), r.unwrap().1, true),
+        (Changed, Unchanged | Stale) => out.push(upload(names, l.unwrap(), rs)),
+        (Unchanged | Stale, Changed) => out.push(download(names.path, rs, ls)),
+        (Changed, Changed) => both_present(ctx, out, names, l.unwrap(), r.unwrap().1, true),
         (Absent, Unchanged | Stale) => out.push(Action::DeleteRemote {
-            path,
+            path: names.rpath,
             expect: rs.unwrap(),
         }),
         (Unchanged | Stale, Absent) => out.push(Action::DeleteLocal {
-            path,
+            path: names.path,
             expect: ls.unwrap(),
         }),
         // An edit wins over a delete.
-        (Absent, Changed) => out.push(download(path, rs, None)),
-        (Changed, Absent) => out.push(upload(path, l.unwrap(), None)),
-        (Absent, Absent) => out.push(Action::Forget { path }),
+        (Absent, Changed) => out.push(download(names.path, rs, None)),
+        (Changed, Absent) => out.push(upload(names, l.unwrap(), None)),
+        (Absent, Absent) => out.push(Action::Forget { path: names.path }),
     }
 }
 
@@ -254,7 +271,7 @@ fn decide(
 fn both_present(
     ctx: &mut Ctx,
     out: &mut Vec<Action>,
-    path: String,
+    names: Names,
     l: &LocalFile,
     r: &RemoteFile,
     had_base: bool,
@@ -265,11 +282,11 @@ fn both_present(
     if !had_base {
         // A fresh empty note (daily note template off, new file) never wins over content.
         if l.size == 0 && r.size > 0 {
-            out.push(download(path, Some(rs), Some(ls)));
+            out.push(download(names.path, Some(rs), Some(ls)));
             return;
         }
         if r.size == 0 && l.size > 0 {
-            out.push(upload(path, l, Some(rs)));
+            out.push(upload(names, l, Some(rs)));
             return;
         }
     }
@@ -288,7 +305,7 @@ fn both_present(
         };
         if a.eq_ignore_ascii_case(b) {
             out.push(Action::Adopt {
-                path,
+                path: names.path,
                 sha1: a.to_ascii_lowercase(),
                 local: ls,
                 remote: rs,
@@ -303,24 +320,68 @@ fn both_present(
         ctx.input.first_sync
     };
     match mode {
-        FirstSync::PreferRemote => out.push(download(path, Some(rs), Some(ls))),
-        FirstSync::PreferLocal => out.push(upload(path, l, Some(rs))),
+        FirstSync::PreferRemote => out.push(download(names.path, Some(rs), Some(ls))),
+        FirstSync::PreferLocal => out.push(upload(names, l, Some(rs))),
         FirstSync::Merge => out.push(Action::Conflict {
-            copy: path::conflict_copy(&path, &ctx.input.stamp, &ctx.input.device),
-            path,
+            copy: path::conflict_copy(&names.path, &ctx.input.stamp, &ctx.input.device),
+            remote_path: names.remote_override(),
+            path: names.path,
             local: ls,
             remote: rs,
         }),
     }
 }
 
-fn upload(path: String, l: &LocalFile, replace: Option<RemoteStat>) -> Action {
+/// Local and remote spelling of one path; they differ only in Unicode form.
+struct Names {
+    path: String,
+    rpath: String,
+}
+
+impl Names {
+    fn remote_override(&self) -> Option<String> {
+        (self.rpath != self.path).then(|| self.rpath.clone())
+    }
+}
+
+fn upload(names: Names, l: &LocalFile, replace: Option<RemoteStat>) -> Action {
     Action::Upload {
-        path,
+        remote_path: names.remote_override(),
+        path: names.path,
         sha1: l.sha1.clone(),
         local: l.into(),
         replace,
     }
+}
+
+/// Folder keys spelled more than one way, with their spellings.
+fn colliding<'a>(paths: impl Iterator<Item = &'a String>) -> BTreeMap<String, BTreeSet<String>> {
+    let mut by_key: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for p in paths {
+        // compare per level, so `A/b` and `a/b` collide at `a`, not at `a/b`
+        let mut prefix = String::new();
+        for part in p.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            by_key
+                .entry(path::key(&prefix))
+                .or_default()
+                .insert(path::normalize(&prefix));
+        }
+    }
+    by_key.retain(|_, spellings| spellings.len() > 1);
+    by_key
+}
+
+fn inside_any<'a>(key: &str, folders: &'a BTreeMap<String, BTreeSet<String>>) -> Option<&'a str> {
+    if folders.is_empty() {
+        return None;
+    }
+    key.match_indices('/')
+        .map(|(i, _)| &key[..i])
+        .find_map(|dir| folders.get_key_value(dir).map(|(k, _)| k.as_str()))
 }
 
 fn download(path: String, remote: Option<RemoteStat>, replace: Option<LocalStat>) -> Action {
@@ -503,6 +564,7 @@ mod tests {
             plan.actions,
             [Action::Upload {
                 path: "a.md".into(),
+                remote_path: None,
                 sha1: Some("new".into()),
                 local: LocalStat {
                     size: 6,
@@ -777,5 +839,72 @@ mod tests {
                 remote: vec![2, 3]
             }
         );
+    }
+
+    #[test]
+    fn nfd_local_name_keeps_both_spellings() {
+        let w = with_base(World::new())
+            .base("Café.md", "s", (5, 1000), (2, 50, 5))
+            .local("Cafe\u{301}.md", 6, 2000, Some("new"))
+            .remote(2, "Café.md", 5, 50);
+        match &w.ready().actions[..] {
+            [Action::Upload {
+                path, remote_path, ..
+            }] => {
+                assert_eq!(path, "Cafe\u{301}.md");
+                assert_eq!(remote_path.as_deref(), Some("Café.md"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn folders_differing_in_case_are_left_alone() {
+        let mut w = with_base(World::new());
+        w.remote
+            .push(folder_meta(30, "Notes", vec![meta(31, 30, "a.md", 1, 1)]));
+        w.remote
+            .push(folder_meta(32, "notes", vec![meta(33, 32, "b.md", 1, 1)]));
+        w.local_folders.push("Notes".into());
+        w = w.local("Notes/b.md", 1, 1, None);
+        w = w.base("notes/b.md", "s", (1, 1), (33, 1, 1));
+        let plan = w.ready();
+        assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+        assert!(matches!(&plan.warnings[..], [Warning::Collision { .. }]));
+    }
+
+    #[test]
+    fn uppercase_local_hash_is_not_a_change() {
+        let w = with_base(World::new())
+            .base("a.md", "abc", (5, 1000), (2, 50, 5))
+            .local("a.md", 5, 2000, Some("ABC"))
+            .remote(2, "a.md", 5, 50);
+        assert_eq!(w.kinds(), ["adopt a.md"]);
+    }
+
+    #[test]
+    fn small_vault_wipe_asks_first() {
+        let mut w = World::new();
+        for i in 0..4u64 {
+            w = w
+                .base(&format!("n{i}.md"), "s", (5, 1000), (100 + i, 50, 5))
+                .remote(100 + i, &format!("n{i}.md"), 5, 50);
+        }
+        assert_eq!(w.ready().guard, Some(Guard::MassDelete { count: 4 }));
+    }
+
+    fn folder_meta(id: u64, name: &str, contents: Vec<Metadata>) -> Metadata {
+        Metadata {
+            is_folder: true,
+            id,
+            parent: Some(ROOT),
+            name: name.into(),
+            size: 0,
+            modified: 0,
+            hash: None,
+            is_deleted: false,
+            deleted_file_id: None,
+            contents: Some(contents),
+        }
     }
 }

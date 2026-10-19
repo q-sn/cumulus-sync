@@ -11,6 +11,7 @@ pub struct LocalFile {
     pub path: String,
     pub size: u64,
     /// ms
+    #[serde(deserialize_with = "ms")]
     pub mtime: i64,
     #[serde(default)]
     pub sha1: Option<String>,
@@ -27,6 +28,7 @@ pub struct LocalScan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalStat {
     pub size: u64,
+    #[serde(deserialize_with = "ms")]
     pub mtime: i64,
 }
 
@@ -129,8 +131,11 @@ pub enum Action {
         expect: RemoteStat,
     },
     /// `replace`: the remote file we expect to overwrite. Skip if its hash moved.
+    /// `remote_path` is set when pCloud spells the name differently (NFC vs NFD).
     Upload {
         path: String,
+        #[serde(rename = "remotePath", skip_serializing_if = "Option::is_none")]
+        remote_path: Option<String>,
         sha1: Option<String>,
         local: LocalStat,
         replace: Option<RemoteStat>,
@@ -144,6 +149,8 @@ pub enum Action {
     /// Remote version goes to `copy`, then the local one is uploaded over it.
     Conflict {
         path: String,
+        #[serde(rename = "remotePath", skip_serializing_if = "Option::is_none")]
+        remote_path: Option<String>,
         copy: String,
         local: LocalStat,
         remote: RemoteStat,
@@ -230,6 +237,11 @@ pub enum PlanResult {
         remote: Vec<u64>,
     },
     Ready(Plan),
+}
+
+/// JS hands over ms timestamps that may carry a fraction.
+fn ms<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+    Ok(f64::deserialize(d)?.trunc() as i64)
 }
 
 fn remote_sha1<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HashMap<u64, String>, D::Error> {

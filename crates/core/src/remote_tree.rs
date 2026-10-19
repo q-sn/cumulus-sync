@@ -108,7 +108,8 @@ impl RemoteTree {
                                     name: m.name.clone(),
                                 },
                             );
-                            if !known && matches!(entry.event, DiffEvent::ModifyFolder(_)) {
+                            // diff collapses events, so even a "created" folder may already have content
+                            if !known {
                                 result.list_folders.push(m.id);
                             }
                         }
@@ -151,15 +152,18 @@ impl RemoteTree {
     }
 
     /// Records the result of our own upload before its diff event arrives.
-    pub fn upsert_file(&mut self, m: &Metadata) {
+    /// False when the parent folder isn't in the tree, so the file couldn't be placed.
+    pub fn upsert_file(&mut self, m: &Metadata) -> bool {
         let parent = m.parent.unwrap_or_default();
         if let Some(replaced) = m.deleted_file_id {
             self.files.remove(&replaced);
         }
-        if let Some(file) = to_file(m, parent) {
-            if self.has_folder(parent) {
+        match to_file(m, parent) {
+            Some(file) if self.has_folder(parent) => {
                 self.files.insert(file.id, file);
+                true
             }
+            _ => false,
         }
     }
 
@@ -421,7 +425,7 @@ mod tests {
             DiffEvent::ModifyFolder(folder(20, 10, "Imported", vec![])),
             DiffEvent::CreateFolder(folder(21, 10, "Fresh", vec![])),
         ]));
-        assert_eq!(r.list_folders, [20]);
+        assert_eq!(r.list_folders, [20, 21]);
         t.merge_listing(&folder(20, 10, "Imported", vec![file(7, 20, "x.md", 7)]));
         assert_eq!(paths(&t), ["Imported/x.md", "Sub/b.md", "a.md"]);
         assert_eq!(t.folder_paths(), ["Fresh", "Imported", "Sub"]);

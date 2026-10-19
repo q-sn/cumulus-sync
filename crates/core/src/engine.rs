@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::filter::{Filter, FilterConfig};
@@ -17,6 +19,10 @@ pub struct Engine {
     cursor: Option<u64>,
     tree: Option<RemoteTree>,
     base: Baseline,
+    /// Remote folder the baseline belongs to. Kept even while the tree is gone.
+    paired_root: Option<u64>,
+    /// Folders diff told us to list; planning waits until they are.
+    pending_list: BTreeSet<u64>,
     filter_config: FilterConfig,
     filter: Filter,
 }
@@ -29,6 +35,10 @@ struct Snapshot {
     cursor: Option<u64>,
     tree: Option<RemoteTree>,
     base: Vec<BaseEntry>,
+    #[serde(default)]
+    paired_root: Option<u64>,
+    #[serde(default)]
+    pending_list: BTreeSet<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -36,6 +46,7 @@ struct Snapshot {
 enum JournalOp {
     Put { entry: BaseEntry },
     Remove { path: String },
+    Pair { root: u64 },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -82,6 +93,8 @@ impl Engine {
             cursor: None,
             tree: None,
             base: Baseline::new(),
+            paired_root: None,
+            pending_list: BTreeSet::new(),
             filter: Filter::new(&filter_config),
             filter_config,
         }
@@ -104,6 +117,10 @@ impl Engine {
             }
             engine.seq = snap.seq;
             engine.cursor = snap.cursor;
+            engine.paired_root = snap
+                .paired_root
+                .or(snap.tree.as_ref().map(RemoteTree::root));
+            engine.pending_list = snap.pending_list;
             engine.tree = snap.tree;
             engine.base = snap
                 .base
@@ -115,9 +132,9 @@ impl Engine {
             if line.trim().is_empty() {
                 continue;
             }
-            // A torn last line means the app died mid-write; that commit never happened.
+            // A torn line means the app died mid-write; that commit never happened.
             let Ok(entry) = serde_json::from_str::<JournalLine>(line) else {
-                break;
+                continue;
             };
             if entry.seq <= engine.seq {
                 continue;
@@ -136,6 +153,8 @@ impl Engine {
             cursor: self.cursor,
             tree: self.tree.clone(),
             base: self.base.values().cloned().collect(),
+            paired_root: self.paired_root,
+            pending_list: self.pending_list.clone(),
         })
         .expect("snapshot serializes")
     }
@@ -165,20 +184,27 @@ impl Engine {
         self.base.len()
     }
 
-    /// Fresh recursive listing of the vault folder. Pointing at a different
-    /// folder than before drops the baseline: it describes another pairing.
+    /// Fresh recursive listing of the vault folder. A baseline made against any
+    /// other folder (or against an unknown one) is dropped: it describes another pairing.
     pub fn reset_remote(&mut self, listing: &str, cursor: u64) -> Result<Vec<String>, ApiError> {
         let meta = pcloud::parse_metadata(listing)?;
         let mut journal = Vec::new();
-        if self.tree.as_ref().is_some_and(|t| t.root() != meta.id) {
+        if self.paired_root != Some(meta.id) {
             let paths: Vec<String> = self.base.values().map(|e| e.path.clone()).collect();
             for p in paths {
                 journal.push(self.record(JournalOp::Remove { path: p }));
             }
+            journal.push(self.record(JournalOp::Pair { root: meta.id }));
         }
         self.tree = Some(RemoteTree::from_listing(&meta));
         self.cursor = Some(cursor);
+        self.pending_list.clear();
         Ok(journal)
+    }
+
+    /// Folders to list with `merge_listing` before the next plan.
+    pub fn pending_listings(&self) -> Vec<u64> {
+        self.pending_list.iter().copied().collect()
     }
 
     pub fn apply_diff(&mut self, body: &str) -> Result<DiffOutcome, ApiError> {
@@ -200,6 +226,8 @@ impl Engine {
         }
         let caught_up = page.entries.is_empty() || Some(page.diffid) == self.cursor;
         self.cursor = Some(page.diffid);
+        self.pending_list
+            .extend(result.list_folders.iter().copied());
         Ok(DiffOutcome {
             reset: false,
             list_folders: result.list_folders,
@@ -212,11 +240,16 @@ impl Engine {
         if let Some(tree) = self.tree.as_mut() {
             tree.merge_listing(&meta);
         }
+        self.pending_list.remove(&meta.id);
         Ok(())
     }
 
+    /// None while the remote picture is incomplete: no tree, or folders still to list.
     pub fn plan(&self, input: &PlanInput) -> Option<PlanResult> {
         let tree = self.tree.as_ref()?;
+        if !self.pending_list.is_empty() {
+            return None;
+        }
         Some(planner::plan(input, tree, &self.base, &self.filter))
     }
 
@@ -245,8 +278,11 @@ impl Engine {
         body: &str,
     ) -> Result<String, ApiError> {
         let meta = pcloud::parse_upload(body)?;
-        if let Some(tree) = self.tree.as_mut() {
-            tree.upsert_file(&meta);
+        let placed = self.tree.as_mut().is_some_and(|t| t.upsert_file(&meta));
+        if !placed {
+            // Landed in a folder we don't know; relist rather than plan on a hole.
+            self.tree = None;
+            self.cursor = None;
         }
         let remote = RemoteStat {
             id: meta.id,
@@ -294,8 +330,9 @@ impl Engine {
         body: &str,
     ) -> Result<Option<String>, ApiError> {
         let meta = pcloud::parse_metadata(body)?;
-        if let Some(tree) = self.tree.as_mut() {
-            tree.upsert_file(&meta);
+        if !self.tree.as_mut().is_some_and(|t| t.upsert_file(&meta)) {
+            self.tree = None;
+            self.cursor = None;
         }
         let Some(entry) = self.base.get(&path::key(from)).cloned() else {
             return Ok(None);
@@ -334,10 +371,14 @@ impl Engine {
         sha1: &str,
     ) -> String {
         // Same key for case-only renames, so a single put replaces the entry.
+        let mut lines = Vec::new();
         if path::key(from) != path::key(to) {
-            self.base.remove(&path::key(from));
+            lines.push(self.record(JournalOp::Remove {
+                path: from.to_string(),
+            }));
         }
-        self.put(to, sha1, local, remote)
+        lines.push(self.put(to, sha1, local, remote));
+        lines.join("\n")
     }
 
     fn put(&mut self, path: &str, sha1: &str, local: LocalStat, remote: RemoteStat) -> String {
@@ -369,6 +410,9 @@ impl Engine {
             }
             JournalOp::Remove { path: p } => {
                 self.base.remove(&path::key(&p));
+            }
+            JournalOp::Pair { root } => {
+                self.paired_root = Some(root);
             }
         }
     }
@@ -468,10 +512,10 @@ mod tests {
             },
         ));
         journal.push('\n');
-        journal.push_str(r#"{"seq":2,"op":"put","entry":{"path":"#);
+        journal.push_str(r#"{"seq":3,"op":"put","entry":{"path":"#);
 
         let restored = Engine::load("dev", Some(&snap), Some(&journal)).unwrap();
-        assert_eq!(restored.seq(), 1);
+        assert_eq!(restored.seq(), 2);
         assert_eq!(restored.base_len(), 1);
         assert!(actions(&restored, &scan(&[("a.md", 1000)])).is_empty());
     }
@@ -487,7 +531,7 @@ mod tests {
         let removal = e.commit_removed("a.md", Some(7));
         let journal = format!("{line}\n{removal}\n");
         let restored = Engine::load("dev", Some(&snap), Some(&journal)).unwrap();
-        assert_eq!(restored.seq(), 2);
+        assert_eq!(restored.seq(), 3);
         assert_eq!(restored.base_len(), 0);
     }
 
@@ -508,8 +552,121 @@ mod tests {
             .unwrap();
         let other = listing(&[]).replace(&format!("\"folderid\":{ROOT}"), "\"folderid\":99");
         let lines = e.reset_remote(&other, 2).unwrap();
-        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.len(), 2, "remove a.md, pair with 99");
         assert_eq!(e.base_len(), 0);
+    }
+
+    fn other_root() -> String {
+        listing(&[]).replace(&format!("\"folderid\":{ROOT}"), "\"folderid\":99")
+    }
+
+    #[test]
+    fn switching_folder_after_a_reset_still_drops_baseline() {
+        let mut e = Engine::new("dev");
+        e.reset_remote(&listing(&[]), 1).unwrap();
+        e.commit_upload("a.md", "abc", LOCAL, &upload_body(7, "a.md", 77))
+            .unwrap();
+        e.apply_diff(r#"{"result":0,"diffid":9,"entries":[{"diffid":9,"event":"reset"}]}"#)
+            .unwrap();
+        assert!(!e.has_remote());
+        e.reset_remote(&other_root(), 2).unwrap();
+        assert_eq!(e.base_len(), 0);
+        assert!(actions(&e, &scan(&[("a.md", 1000)]))
+            .iter()
+            .all(|a| !a.is_delete()));
+    }
+
+    #[test]
+    fn switching_folder_with_journal_only_state_drops_baseline() {
+        // first sync killed before any snapshot: only journal lines survive
+        let mut e = Engine::new("dev");
+        let mut journal = e.reset_remote(&listing(&[]), 1).unwrap();
+        journal.push(
+            e.commit_upload("a.md", "abc", LOCAL, &upload_body(7, "a.md", 77))
+                .unwrap(),
+        );
+        let mut restored = Engine::load("dev", None, Some(&journal.join("\n"))).unwrap();
+        assert_eq!(restored.base_len(), 1);
+        restored.reset_remote(&other_root(), 2).unwrap();
+        assert_eq!(restored.base_len(), 0);
+    }
+
+    #[test]
+    fn same_folder_relisting_keeps_baseline() {
+        let mut e = Engine::new("dev");
+        e.reset_remote(&listing(&[]), 1).unwrap();
+        e.commit_upload("a.md", "abc", LOCAL, &upload_body(7, "a.md", 77))
+            .unwrap();
+        let lines = e.reset_remote(&listing(&[(7, "a.md", 77)]), 5).unwrap();
+        assert!(lines.is_empty());
+        assert_eq!(e.base_len(), 1);
+    }
+
+    #[test]
+    fn planning_waits_for_folders_to_list() {
+        let mut e = Engine::new("dev");
+        e.reset_remote(&listing(&[]), 1).unwrap();
+        let moved_in = r#"{"result":0,"diffid":5,"entries":[{"diffid":5,"event":"modifyfolder","metadata":
+            {"isfolder":true,"folderid":20,"parentfolderid":10,"name":"A","modified":1}}]}"#;
+        e.apply_diff(moved_in).unwrap();
+        assert_eq!(e.pending_listings(), [20]);
+        assert!(e.plan(&scan(&[])).is_none());
+
+        // survives a restart
+        let mut e = Engine::load("dev", Some(&e.snapshot()), None).unwrap();
+        assert!(e.plan(&scan(&[])).is_none());
+
+        let listing_a = r#"{"result":0,"metadata":{"isfolder":true,"folderid":20,"parentfolderid":10,"name":"A",
+            "modified":1,"contents":[{"isfolder":false,"fileid":8,"parentfolderid":20,"name":"x.md","size":5,"modified":1,"hash":5}]}}"#;
+        e.merge_listing(listing_a).unwrap();
+        assert!(e.pending_listings().is_empty());
+        assert!(matches!(
+            &actions(&e, &scan(&[]))[..],
+            [Action::Download { .. }]
+        ));
+    }
+
+    #[test]
+    fn torn_line_in_the_middle_is_skipped() {
+        let mut e = Engine::new("dev");
+        let mut lines = e.reset_remote(&listing(&[]), 1).unwrap();
+        lines.push(r#"{"seq":2,"op":"put","ent"#.to_string());
+        lines.push(
+            e.commit_upload("b.md", "abc", LOCAL, &upload_body(8, "b.md", 88))
+                .unwrap(),
+        );
+        let restored = Engine::load("dev", None, Some(&lines.join("\n"))).unwrap();
+        assert_eq!(restored.base_len(), 1);
+    }
+
+    #[test]
+    fn rename_to_another_key_replays_the_same() {
+        let mut e = Engine::new("dev");
+        let mut lines = e.reset_remote(&listing(&[(7, "a.md", 77)]), 1).unwrap();
+        lines.push(e.commit_download(
+            "a.md",
+            "abc",
+            LOCAL,
+            RemoteStat {
+                id: 7,
+                hash: 77,
+                size: 5,
+                modified: 1,
+            },
+        ));
+        lines.push(e.commit_rename_local("a.md", "b.md", LOCAL).unwrap());
+        let restored = Engine::load("dev", None, Some(&lines.join("\n"))).unwrap();
+        assert_eq!(restored.base_len(), 1);
+        assert_eq!(e.base_len(), 1);
+    }
+
+    #[test]
+    fn upload_into_unknown_folder_forces_relisting() {
+        let mut e = Engine::new("dev");
+        e.reset_remote(&listing(&[]), 1).unwrap();
+        let body = r#"{"result":0,"fileids":[9],"metadata":[{"isfolder":false,"fileid":9,"parentfolderid":555,"name":"x.md","size":5,"modified":2,"hash":9}]}"#;
+        e.commit_upload("New/x.md", "abc", LOCAL, body).unwrap();
+        assert!(!e.has_remote());
     }
 
     #[test]

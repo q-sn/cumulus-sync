@@ -122,7 +122,7 @@ impl WasmEngine {
         let result = self
             .0
             .plan(&input)
-            .ok_or_else(|| JsError::new("no remote state, list the vault folder first"))?;
+            .ok_or_else(|| JsError::new("remote state incomplete"))?;
         Ok(match &result {
             PlanResult::NeedHashes { local, remote } => to_json(&WirePlan::NeedHashes {
                 local,
@@ -130,6 +130,16 @@ impl WasmEngine {
             }),
             PlanResult::Ready(plan) => to_json(&WirePlan::Ready { plan }),
         })
+    }
+
+    /// Folder ids to list (recursively) and pass to `mergeListing` before planning.
+    #[wasm_bindgen(js_name = pendingListings)]
+    pub fn pending_listings(&self) -> Vec<String> {
+        self.0
+            .pending_listings()
+            .iter()
+            .map(u64::to_string)
+            .collect()
     }
 
     #[wasm_bindgen(js_name = remoteFolder)]

@@ -69,6 +69,10 @@ impl Filter {
         if key == self.config_dir_key || key.starts_with(&format!("{}/", self.config_dir_key)) {
             return Some(Skip::Builtin);
         }
+        // Obsidian doesn't show dot files, so they can't be synced through it.
+        if key.split('/').any(|part| part.starts_with('.')) {
+            return Some(Skip::Builtin);
+        }
         if self.builtin.iter().any(|g| glob(g, &key)) {
             return Some(Skip::Builtin);
         }
@@ -87,47 +91,60 @@ impl Filter {
 }
 
 /// `*` and `?` stay within a path segment, `**` spans segments. A pattern
-/// without `/` matches the file name at any depth, like .gitignore.
+/// without `/` matches a file or folder name at any depth, like .gitignore.
 pub fn glob(pattern: &str, path: &str) -> bool {
-    let pattern = pattern.trim_start_matches('/');
+    let pattern = pattern.trim_start_matches('/').trim_end_matches('/');
+    let parts: Vec<&str> = path.split('/').collect();
     if !pattern.contains('/') {
-        return glob_segment(pattern.as_bytes(), path::file_name(path).as_bytes())
-            || glob_parts(&["**", pattern], &path.split('/').collect::<Vec<_>>());
+        return parts.iter().any(|part| segment(pattern, part));
     }
     let pat: Vec<&str> = pattern.split('/').collect();
-    let parts: Vec<&str> = path.split('/').collect();
     glob_parts(&pat, &parts)
 }
 
 fn glob_parts(pat: &[&str], parts: &[&str]) -> bool {
     match pat.split_first() {
         None => parts.is_empty(),
-        Some((&"**", rest)) => (0..=parts.len()).any(|i| glob_parts(rest, &parts[i..])),
+        Some((&"**", rest)) => {
+            let rest = skip_stars(rest);
+            rest.is_empty() || (0..=parts.len()).any(|i| glob_parts(rest, &parts[i..]))
+        }
         Some((first, rest)) => match parts.split_first() {
-            Some((part, tail)) => {
-                glob_segment(first.as_bytes(), part.as_bytes()) && glob_parts(rest, tail)
-            }
+            Some((part, tail)) => segment(first, part) && glob_parts(rest, tail),
             None => false,
         },
     }
 }
 
-fn glob_segment(pat: &[u8], s: &[u8]) -> bool {
-    match pat.split_first() {
-        None => s.is_empty(),
-        Some((b'*', rest)) => (0..=s.len()).any(|i| glob_segment(rest, &s[i..])),
-        Some((b'?', rest)) => !s.is_empty() && glob_segment(rest, &s[utf8_len(s[0])..]),
-        Some((c, rest)) => s.first() == Some(c) && glob_segment(rest, &s[1..]),
+fn skip_stars<'a, 'b>(mut pat: &'a [&'b str]) -> &'a [&'b str] {
+    while pat.first() == Some(&"**") {
+        pat = &pat[1..];
     }
+    pat
 }
 
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0xF0..=0xFF => 4,
-        0xE0..=0xEF => 3,
-        0xC0..=0xDF => 2,
-        _ => 1,
+/// Wildcard match within one segment, linear time (no backtracking blowup).
+fn segment(pattern: &str, s: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let s: Vec<char> = s.chars().collect();
+    let (mut pi, mut si) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while si < s.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == s[si]) {
+            pi += 1;
+            si += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some((pi, si));
+            pi += 1;
+        } else if let Some((sp, ss)) = star {
+            pi = sp + 1;
+            si = ss + 1;
+            star = Some((sp, ss + 1));
+        } else {
+            return false;
+        }
     }
+    p[pi..].iter().all(|c| *c == '*')
 }
 
 #[cfg(test)]
@@ -154,6 +171,11 @@ mod tests {
         assert!(!glob("**/drafts/*", "a/drafts/b/x.md"));
         assert!(glob("n?te.md", "nöte.md"));
         assert!(glob("Thumbs.db", "deep/Thumbs.db"));
+        assert!(glob("Private", "Private/x.md"));
+        assert!(glob("private", "a/private/x.md"));
+        assert!(glob("a/**/**/b", "a/b"));
+        let long = "a".repeat(60);
+        assert!(!glob("*a*a*a*a*a*a*a*a*b", &long));
     }
 
     #[test]
@@ -166,7 +188,8 @@ mod tests {
         assert_eq!(f.skip_path(".Obsidian/app.json"), Some(Skip::Builtin));
         assert_eq!(f.skip_path(".trash/old.md"), Some(Skip::Builtin));
         assert_eq!(f.skip_path("photos/Thumbs.db"), Some(Skip::Builtin));
-        assert_eq!(f.skip_path(".obsidian-notes/a.md"), None);
+        assert_eq!(f.skip_path(".github/workflows/ci.yml"), Some(Skip::Builtin));
+        assert_eq!(f.skip_path("notes/.hidden.md"), Some(Skip::Builtin));
         assert_eq!(f.skip_path("Notes/a.md"), None);
     }
 
