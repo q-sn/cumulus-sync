@@ -38,6 +38,8 @@ export class FakePCloud {
 	events: Event[] = [];
 	trash: string[] = [];
 	calls: string[] = [];
+	/** Runs before every API call; throw to simulate a failure. */
+	before: ((method: string, q: URLSearchParams) => void) | null = null;
 	private nextId = 100;
 	private diffid = 1000;
 	private now = 1_700_000_000;
@@ -74,6 +76,13 @@ export class FakePCloud {
 		if (f) this.deleteFile(f);
 	}
 
+	moveFile(from: string, toDir: string): void {
+		const f = this.fileAt(from);
+		if (!f) return;
+		f.parent = this.mkdirs(toDir);
+		this.emit("modifyfile", this.fileMeta(f));
+	}
+
 	moveFolder(from: string, toParent: string): void {
 		const id = this.mkdirs(from);
 		const folder = this.folders.get(id);
@@ -96,13 +105,14 @@ export class FakePCloud {
 
 	private async handle(req: HttpRequest): Promise<HttpResponse> {
 		const url = new URL(req.url);
-		if (url.hostname === "dl.fake") {
+		if (url.hostname === "dl1.test.pcloud.com") {
 			const f = this.files.get(Number(url.pathname.split("/").pop()));
 			return f ? bytes(f.data) : status(404);
 		}
 		const method = url.pathname.slice(1);
 		const q = url.searchParams;
 		this.calls.push(method);
+		this.before?.(method, q);
 		if (q.get("access_token") !== "test-token") return json(`{"result":2094,"error":"Invalid 'access_token' provided."}`);
 		const file = () => this.files.get(Number(q.get("fileid")));
 		const notFound = `{"result":2009,"error":"File not found."}`;
@@ -128,7 +138,12 @@ export class FakePCloud {
 				const parent = Number(q.get("folderid"));
 				if (!this.folders.has(parent)) return json(`{"result":2005,"error":"Directory does not exist."}`);
 				const mtime = q.get("mtime") ? Number(q.get("mtime")) : undefined;
-				const f = this.upload(parent, q.get("filename") ?? "", new Uint8Array(req.body ?? new ArrayBuffer(0)), mtime);
+				let name = q.get("filename") ?? "";
+				if (q.get("renameifexists") === "1") {
+					const taken = (n: string) => [...this.files.values()].some((f) => f.parent === parent && f.name === n);
+					for (let i = 1; taken(name); i++) name = name.replace(/( \(\d+\))?(\.[^.]*)?$/, ` (${i})$2`);
+				}
+				const f = this.upload(parent, name, new Uint8Array(req.body ?? new ArrayBuffer(0)), mtime);
 				return json(`{"result":0,"fileids":[${f.id}],"metadata":[${this.fileMeta(f)}]}`);
 			}
 			case "stat": {
@@ -144,7 +159,7 @@ export class FakePCloud {
 			}
 			case "getfilelink": {
 				const f = file();
-				return json(f ? `{"result":0,"hosts":["dl.fake"],"path":"/f/${f.id}","expires":"x"}` : notFound);
+				return json(f ? `{"result":0,"hosts":["dl1.test.pcloud.com"],"path":"/f/${f.id}","expires":"x"}` : notFound);
 			}
 			case "deletefile": {
 				const f = file();

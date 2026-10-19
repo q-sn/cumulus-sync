@@ -4,7 +4,7 @@ import { PCloudClient } from "./pcloud/client";
 import type { Transport } from "./pcloud/transport";
 import { PCLOUD_HOSTS, PCloudError, type Session, type UserInfo } from "./pcloud/types";
 
-const TOKEN_SECRET_ID = "cumulus-pcloud-token";
+const LEGACY_TOKEN_ID = "cumulus-pcloud-token";
 const HOST_KEY = "cumulus-pcloud-host";
 const STATE_KEY = "cumulus-oauth-state";
 const STATE_TTL_MS = 15 * 60 * 1000;
@@ -13,13 +13,24 @@ const VALID_HOSTS: readonly string[] = Object.values(PCLOUD_HOSTS);
 
 // not in data.json: it can get synced along with .obsidian
 export class AuthManager {
+	/** Secret storage is shared by all vaults; each vault keeps its own account. */
+	private readonly tokenId: string;
+
 	constructor(
 		private readonly app: App,
 		private readonly transport: Transport,
-	) {}
+		vaultId: string,
+	) {
+		this.tokenId = `cumulus-token-${vaultId.toLowerCase().replace(/[^a-z0-9-]/g, "")}`;
+		const legacy = app.secretStorage.getSecret(LEGACY_TOKEN_ID);
+		if (legacy && !app.secretStorage.getSecret(this.tokenId)) {
+			app.secretStorage.setSecret(this.tokenId, legacy);
+			app.secretStorage.setSecret(LEGACY_TOKEN_ID, "");
+		}
+	}
 
 	get session(): Session | null {
-		const token = this.app.secretStorage.getSecret(TOKEN_SECRET_ID);
+		const token = this.app.secretStorage.getSecret(this.tokenId);
 		const host = this.app.loadLocalStorage(HOST_KEY) as string | null;
 		return token && host && VALID_HOSTS.includes(host) ? { token, host } : null;
 	}
@@ -48,10 +59,11 @@ export class AuthManager {
 
 	async completeOAuth(params: Record<string, string>): Promise<UserInfo> {
 		const saved = this.app.loadLocalStorage(STATE_KEY) as { state: string; at: number } | null;
-		this.app.saveLocalStorage(STATE_KEY, null);
 		if (!saved || saved.state !== params.state || Date.now() - saved.at > STATE_TTL_MS) {
+			// a stray link must not cancel a sign-in that is still in progress
 			throw new Error("Sign-in link is stale or was not started from this device. Try connecting again.");
 		}
+		this.app.saveLocalStorage(STATE_KEY, null);
 		const token = params.access_token;
 		const host = params.hostname;
 		if (!token || !host || !VALID_HOSTS.includes(host)) throw new Error("Sign-in response is incomplete.");
@@ -80,16 +92,24 @@ export class AuthManager {
 		throw lastError;
 	}
 
-	async disconnect(): Promise<void> {
+	/** Signs this vault out. False if pCloud couldn't be told to revoke the token. */
+	async disconnect(): Promise<boolean> {
 		const client = this.client();
-		this.app.secretStorage.setSecret(TOKEN_SECRET_ID, "");
+		let revoked = false;
+		if (client) {
+			revoked = await client
+				.logout()
+				.then(() => true)
+				.catch(() => false);
+		}
+		this.app.secretStorage.setSecret(this.tokenId, "");
 		this.app.saveLocalStorage(HOST_KEY, null);
-		await client?.logout().catch(() => undefined);
+		return revoked;
 	}
 
 	private async connect(session: Session): Promise<UserInfo> {
 		const info = await new PCloudClient(this.transport, session, { maxAttempts: 2 }).userInfo();
-		this.app.secretStorage.setSecret(TOKEN_SECRET_ID, session.token);
+		this.app.secretStorage.setSecret(this.tokenId, session.token);
 		this.app.saveLocalStorage(HOST_KEY, session.host);
 		return info;
 	}

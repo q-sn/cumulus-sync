@@ -21,19 +21,22 @@ interface Phone {
 	/** Answer to the next mass-delete question: delete (true) or keep the files. */
 	allowDeletes: boolean;
 	sync(): Promise<void>;
+	/** Sync without asserting success; returns the state it ended in. */
+	trySync(): Promise<string>;
+	useFolder(path: string): void;
 	restart(): Phone;
 }
 
 function phone(cloud: FakePCloud, app = new FakeApp()): Phone {
-	app.secrets.set("cumulus-pcloud-token", "test-token");
 	app.local.set("cumulus-pcloud-host", "eapi.pcloud.com");
 	const device = new Device(app as unknown as App);
-	device.update({ folder: { id: String(cloud.mkdirs(VAULT)), path: `/${VAULT}` } });
+	app.secrets.set(`cumulus-token-${device.id}`, "test-token");
+	if (!device.folder) device.update({ folder: { id: String(cloud.mkdirs(VAULT)), path: `/${VAULT}` } });
 	const log = new Log();
 	const asked: Phone["asked"] = [];
 	const controller = new SyncController(
 		app as unknown as App,
-		new AuthManager(app as unknown as App, cloud.transport),
+		new AuthManager(app as unknown as App, cloud.transport, device.id),
 		device,
 		new StateStore(app.vault.adapter as never, ".obsidian/plugins/cumulus-sync"),
 		new LocalVault(app as unknown as App),
@@ -53,6 +56,13 @@ function phone(cloud: FakePCloud, app = new FakeApp()): Phone {
 			await controller.sync("manual");
 			const failed = controller.current.state === "error";
 			assert.ok(!failed, `sync failed: ${controller.current.message}\n${log.all().map((e) => e.message).join("\n")}`);
+		},
+		async trySync() {
+			await controller.sync("manual");
+			return controller.current.state;
+		},
+		useFolder(path: string) {
+			device.update({ folder: { id: String(cloud.mkdirs(path)), path: `/${path}` } });
 		},
 		restart: () => phone(cloud, app),
 	};
@@ -122,7 +132,7 @@ describe("sync against a fake pCloud", () => {
 
 		assert.deepEqual(cloud.paths(VAULT), ["keep.md"]);
 		assert.deepEqual(p.app.vault.paths(), ["keep.md"]);
-		assert.deepEqual(p.app.vault.trash, ["gone-on-desktop.md"]);
+		assert.deepEqual(p.app.vault.trashed, ["gone-on-desktop.md"]);
 		assert.ok(cloud.trash.includes("gone-on-phone.md"));
 	});
 
@@ -219,5 +229,118 @@ describe("sync against a fake pCloud", () => {
 		assert.deepEqual(p.asked, [{ count: 15, where: "remote" }]);
 		assert.equal(p.app.vault.paths().length, 20);
 		assert.equal(cloud.paths(VAULT).length, 20, "restored in pCloud from this device");
+	});
+
+	// --- found in review ---
+
+	test("a note created on both sides at once is not overwritten", async () => {
+		const cloud = new FakePCloud();
+		cloud.put(`${VAULT}/a.md`, "a");
+		const p = phone(cloud);
+		await p.sync();
+
+		p.app.vault.write("daily.md", "phone daily");
+		// the desktop saves its own daily note right before our upload
+		cloud.before = (method) => {
+			if (method === "uploadfile" && !cloud.text(`${VAULT}/daily.md`)) cloud.put(`${VAULT}/daily.md`, "desktop daily, longer");
+		};
+		await p.sync();
+		cloud.before = null;
+		await p.sync();
+		await p.sync();
+
+		const remote = cloud.paths(VAULT).map((x) => cloud.text(`${VAULT}/${x}`));
+		const local = p.app.vault.paths().map((x) => p.app.vault.text(x));
+		for (const text of ["phone daily", "desktop daily, longer"]) {
+			assert.ok(remote.includes(text), `pCloud lost "${text}": ${cloud.paths(VAULT).join(", ")}`);
+			assert.ok(local.includes(text), `phone lost "${text}": ${p.app.vault.paths().join(", ")}`);
+		}
+	});
+
+	test("deleting a file that was moved meanwhile leaves it alone", async () => {
+		const cloud = new FakePCloud();
+		cloud.put(`${VAULT}/a.md`, "a");
+		cloud.put(`${VAULT}/keep.md`, "k");
+		const p = phone(cloud);
+		await p.sync();
+
+		p.app.vault.remove("a.md");
+		cloud.before = (method) => {
+			if (method === "stat" && cloud.text(`${VAULT}/a.md`)) cloud.moveFile(`${VAULT}/a.md`, `${VAULT}/Archive`);
+		};
+		await p.sync();
+		cloud.before = null;
+		assert.equal(cloud.text(`${VAULT}/Archive/a.md`), "a", "the moved file survives in pCloud");
+		await p.sync();
+		assert.equal(p.app.vault.text("Archive/a.md"), "a");
+	});
+
+	test("switching folders after an interrupted first sync deletes nothing", async () => {
+		const cloud = new FakePCloud();
+		cloud.put(`${VAULT}/a.md`, "a");
+		cloud.put(`${VAULT}/b.md`, "b");
+		const p = phone(cloud);
+		await p.sync();
+		// app killed before the snapshot was written: only the journal is left
+		const store = p.app.vault.adapter.store;
+		for (const k of [...store.keys()]) if (k.includes("state-")) store.delete(k);
+
+		const again = p.restart();
+		cloud.mkdirs("Other/Empty");
+		again.useFolder("Other/Empty");
+		await again.sync();
+		assert.deepEqual(p.app.vault.trashed, []);
+		assert.deepEqual(p.app.vault.paths(), ["a.md", "b.md"]);
+		assert.deepEqual(cloud.paths("Other/Empty"), ["a.md", "b.md"]);
+	});
+
+	test("a folder moved in while listing it fails is not deleted locally", async () => {
+		const cloud = new FakePCloud();
+		cloud.put(`${VAULT}/a.md`, "a");
+		cloud.put(`${VAULT}/Box/x.md`, "x");
+		const p = phone(cloud);
+		await p.sync();
+
+		cloud.moveFolder(`${VAULT}/Box`, "Elsewhere");
+		cloud.moveFolder("Elsewhere/Box", VAULT);
+		cloud.before = (method, q) => {
+			if (method === "listfolder" && q.get("folderid") === String(cloud.mkdirs(`${VAULT}/Box`))) {
+				throw new Error("network down");
+			}
+		};
+		assert.equal(await p.trySync(), "offline");
+		cloud.before = null;
+		await p.sync();
+		assert.equal(p.app.vault.text("Box/x.md"), "x");
+		assert.deepEqual(p.app.vault.trashed, []);
+	});
+
+	test("going offline mid-sync stops at once and keeps the edits queued", async () => {
+		const cloud = new FakePCloud();
+		for (let i = 0; i < 5; i++) cloud.put(`${VAULT}/n${i}.md`, `${i}`);
+		const p = phone(cloud);
+		await p.sync();
+
+		for (let i = 0; i < 5; i++) p.app.vault.write(`n${i}.md`, `${i} edited`);
+		let calls = 0;
+		cloud.before = (method) => {
+			if (method === "uploadfile" && ++calls > 1) throw new Error("network down");
+		};
+		assert.equal(await p.trySync(), "offline");
+		assert.ok(calls <= 5, `kept retrying offline: ${calls} upload attempts`);
+		cloud.before = null;
+		await p.sync();
+		for (let i = 0; i < 5; i++) assert.equal(cloud.text(`${VAULT}/n${i}.md`), `${i} edited`);
+	});
+
+	test("dot files in pCloud are ignored", async () => {
+		const cloud = new FakePCloud();
+		cloud.put(`${VAULT}/a.md`, "a");
+		cloud.put(`${VAULT}/.gitignore`, "node_modules");
+		cloud.put(`${VAULT}/.github/ci.yml`, "x");
+		const p = phone(cloud);
+		await p.sync();
+		await p.sync();
+		assert.deepEqual(p.app.vault.paths(), ["a.md"]);
 	});
 });

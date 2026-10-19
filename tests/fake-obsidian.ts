@@ -35,7 +35,13 @@ export class TFolder extends TAbstractFile {
 	}
 }
 
-export class MarkdownView {}
+export class TextFileView {
+	file: TFile | null = null;
+	data = "";
+	getViewData(): string {
+		return this.data;
+	}
+}
 
 let clock = 1_700_000_000_000;
 export const tick = () => (clock += 1000);
@@ -44,8 +50,17 @@ export class FakeVault {
 	configDir = ".obsidian";
 	files = new Map<string, { file: TFile; data: Uint8Array }>();
 	folders = new Map<string, TFolder>([["", new TFolder("", this)]]);
-	trash: string[] = [];
+	trash_: string[] = [];
 	adapter = new FakeAdapter();
+
+	getFiles(): TFile[] {
+		return [...this.files.values()].map((f) => f.file);
+	}
+
+	async trash(f: TAbstractFile, _system: boolean): Promise<void> {
+		this.trash_.push(f.path);
+		this.files.delete(f.path);
+	}
 
 	getAllLoadedFiles(): TAbstractFile[] {
 		return [...this.folders.values(), ...[...this.files.values()].map((f) => f.file)];
@@ -118,6 +133,10 @@ export class FakeVault {
 
 	paths(): string[] {
 		return [...this.files.keys()].sort();
+	}
+
+	get trashed(): string[] {
+		return this.trash_;
 	}
 
 	private touch(file: TFile, size: number, mtime?: number): void {

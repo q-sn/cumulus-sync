@@ -21,6 +21,13 @@ export interface ClientOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const BASE_TIMEOUT_MS = 30_000;
+// slow mobile link, about 64 KB/s
+const MS_PER_BYTE = 1 / 64;
+const timeoutFor = (bytes: number) => BASE_TIMEOUT_MS + Math.round(bytes * MS_PER_BYTE);
+
+const DOWNLOAD_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.pcloud\.com$/i;
+
 // metadata is parsed in wasm: hash and ids are u64 and break JSON.parse
 export class PCloudClient {
 	private readonly maxAttempts: number;
@@ -85,31 +92,45 @@ export class PCloudClient {
 		return parsed<RemoteMetadata>(pcloudUpload, await this.uploadRaw(folderId, name, data, mtimeSec));
 	}
 
-	uploadRaw(folderId: string, name: string, data: ArrayBuffer, mtimeSec?: number): Promise<string> {
+	/** `renameIfExists`: don't overwrite a file of the same name, keep both. */
+	uploadRaw(
+		folderId: string,
+		name: string,
+		data: ArrayBuffer,
+		mtimeSec?: number,
+		opts: { renameIfExists?: boolean } = {},
+	): Promise<string> {
 		const params: Params = {
 			folderid: folderId,
 			nopartial: 1,
 			mtime: mtimeSec,
+			renameifexists: opts.renameIfExists ? 1 : undefined,
 		};
+		const timeoutMs = timeoutFor(data.byteLength);
 		// PUT with an empty body never gets a response from pCloud
 		if (this.uploadMode === "put" && data.byteLength > 0) {
-			return this.call("uploadfile", { ...params, filename: name }, { method: "PUT", body: data });
+			return this.call("uploadfile", { ...params, filename: name }, { method: "PUT", body: data, timeoutMs });
 		}
 		const form = multipart(name, data);
 		return this.call("uploadfile", params, {
 			method: "POST",
 			body: form.body,
 			contentType: form.contentType,
+			timeoutMs,
 		});
 	}
 
-	async download(fileId: string): Promise<ArrayBuffer> {
+	/** `size` only sets how long to wait. */
+	async download(fileId: string, size = 0): Promise<ArrayBuffer> {
 		const body = await this.call("getfilelink", { fileid: fileId });
 		const link = JSON.parse(body) as { hosts: string[]; path: string };
 		let lastError: PCloudError | null = null;
-		// any of the hosts will do
-		for (const host of link.hosts) {
-			const res = await this.send({ url: `https://${host}${link.path}`, method: "GET" }).catch(
+		// any of the hosts will do, as long as they are pCloud's
+		const hosts = link.hosts.filter((h) => DOWNLOAD_HOST.test(h));
+		if (hosts.length === 0) throw new Error("pCloud gave no usable download address");
+		for (const host of hosts) {
+			const req: HttpRequest = { url: `https://${host}${link.path}`, method: "GET", timeoutMs: timeoutFor(size) };
+			const res = await this.send(req).catch(
 				(e: unknown) => {
 					lastError = asNetworkError(e);
 					return null;
@@ -117,9 +138,9 @@ export class PCloudClient {
 			);
 			if (!res) continue;
 			if (res.status === 200) return res.arrayBuffer();
-			lastError = PCloudError.network(`download failed with HTTP ${res.status}`, res.status);
+			lastError = PCloudError.http(res.status);
 		}
-		throw lastError ?? PCloudError.network("getfilelink returned no hosts");
+		throw lastError ?? PCloudError.network("download failed");
 	}
 
 	async deleteFile(fileId: string): Promise<RemoteMetadata> {
@@ -160,22 +181,26 @@ export class PCloudClient {
 
 		for (let attempt = 1; ; attempt++) {
 			let error: PCloudError;
+			let retryAfterMs = 0;
 			try {
-				const res = await this.send({ ...req, url });
+				const res = await this.send({ timeoutMs: BASE_TIMEOUT_MS, ...req, url });
 				if (res.status !== 200) {
-					error = PCloudError.network(`${method}: HTTP ${res.status}`, res.status);
+					error = PCloudError.http(res.status);
+					retryAfterMs = retryAfter(res);
 				} else {
 					const body = res.text();
 					const wireError = pcloudError(body);
 					if (wireError === undefined) return body;
 					error = PCloudError.fromWire(wireError);
+					// not JSON at all: a captive portal or a proxy page, i.e. not really online
+					if (error.code === 0) error = PCloudError.network(`${method}: unexpected response`);
 				}
 			} catch (e) {
 				error = asNetworkError(e);
 			}
 			if (!error.retryable || attempt >= this.maxAttempts) throw error;
 			const jitter = 0.5 + Math.random();
-			await this.sleep(this.backoffMs * 2 ** (attempt - 1) * jitter);
+			await this.sleep(Math.max(retryAfterMs, this.backoffMs * 2 ** (attempt - 1) * jitter));
 		}
 	}
 
@@ -191,6 +216,12 @@ function parsed<T>(parser: (body: string) => string, body: string): T {
 		if (e instanceof Error && e.message.startsWith("{")) throw PCloudError.fromWire(e.message);
 		throw e;
 	}
+}
+
+function retryAfter(res: HttpResponse): number {
+	const header = Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === "retry-after")?.[1];
+	const seconds = Number(header);
+	return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 120) * 1000 : 0;
 }
 
 function asNetworkError(e: unknown): PCloudError {

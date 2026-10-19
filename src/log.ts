@@ -1,3 +1,5 @@
+import { redact } from "./pcloud/types";
+
 export interface LogEntry {
 	time: number;
 	level: "info" | "warn" | "error";
@@ -26,8 +28,9 @@ export class Log {
 	}
 
 	private push(level: LogEntry["level"], message: string): void {
+		message = redact(message);
 		this.entries.push({ time: Date.now(), level, message });
 		if (this.entries.length > MAX) this.entries.splice(0, this.entries.length - MAX);
-		if (level !== "info") console.warn(`[cumulus] ${message}`);
+		if (level === "error") console.error(`[cumulus] ${message}`);
 	}
 }

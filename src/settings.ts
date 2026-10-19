@@ -43,8 +43,14 @@ export class CumulusSettingTab extends PluginSettingTab {
 			.setDesc(device.email ?? "Connected")
 			.addButton((b) =>
 				b.setButtonText("Disconnect").onClick(async () => {
-					await auth.disconnect();
+					const revoked = await auth.disconnect();
 					device.update({ email: null, folder: null });
+					if (!revoked) {
+						new Notice(
+							"Signed out here, but pCloud couldn't be reached to revoke access. You can remove it in pCloud under Settings, Security.",
+							10000,
+						);
+					}
 					this.display();
 				}),
 			);

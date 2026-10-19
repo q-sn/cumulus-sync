@@ -14,6 +14,8 @@ export type LoadProblem = "otherDevice" | "unsupported" | "corrupt" | null;
 export class StateStore {
 	private slot = 0;
 	private journalLines = 0;
+	/** The journal file ends mid-line (the app died while appending). */
+	private tornTail = false;
 
 	constructor(
 		private readonly adapter: DataAdapter,
@@ -27,6 +29,7 @@ export class StateStore {
 			.filter((s) => s.snapshot !== null)
 			.sort((a, b) => b.seq - a.seq);
 		const journal = await this.read(JOURNAL);
+		this.tornTail = !!journal && !journal.endsWith("\n");
 
 		for (const candidate of best) {
 			try {
@@ -54,9 +57,10 @@ export class StateStore {
 		if (list.length === 0) return;
 		await this.ensureDir();
 		const path = `${this.dir}/${JOURNAL}`;
-		const text = list.map((l) => `${l}\n`).join("");
+		const text = (this.tornTail ? "\n" : "") + list.map((l) => `${l}\n`).join("");
 		if (await this.adapter.exists(path)) await this.adapter.append(path, text);
 		else await this.adapter.write(path, text);
+		this.tornTail = false;
 		this.journalLines += list.length;
 	}
 
@@ -72,6 +76,7 @@ export class StateStore {
 		// Lines up to engine.seq() are in the snapshot now; load() skips them anyway.
 		await this.adapter.write(`${this.dir}/${JOURNAL}`, "");
 		this.journalLines = 0;
+		this.tornTail = false;
 	}
 
 	async clear(deviceId: string): Promise<Engine> {

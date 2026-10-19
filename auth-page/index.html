@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Fmhty0HzgqBPudpbUDDHhdGb4eEnQkVY1dt+IHTqzyo='; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-hkfxhRyF/adVvmkpDjHm+2N4lj3hTP2inA9VUyPLZlE='; style-src 'unsafe-inline'">
 <title>Cumulus · pCloud sign-in</title>
 <style>
   :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
@@ -43,11 +43,20 @@
   var code = "cumulus1:" + host + ":" + token;
   document.getElementById("open").href = link;
   document.getElementById("code").textContent = code;
+  function forget() {
+    document.getElementById("code").textContent = "";
+    document.getElementById("copy").disabled = true;
+  }
   document.getElementById("copy").onclick = function () {
     navigator.clipboard.writeText(code).then(function () {
       document.getElementById("copy").textContent = "Copied";
+      setTimeout(forget, 60000);
     });
   };
+  // the code is a password to the account: don't leave it on screen
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") setTimeout(forget, 60000);
+  });
   document.getElementById("ok").className = "";
   location.href = link;
 })();

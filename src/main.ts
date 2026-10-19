@@ -23,11 +23,12 @@ export default class CumulusPlugin extends Plugin {
 	private log = new Log();
 	private tab!: CumulusSettingTab;
 	private lastState: SyncStatus["state"] = "idle";
+	private lastError = "";
 
 	async onload(): Promise<void> {
 		await loadCore();
-		this.auth = new AuthManager(this.app, obsidianTransport);
 		this.device = new Device(this.app);
+		this.auth = new AuthManager(this.app, obsidianTransport, this.device.id);
 
 		const dir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 		const statusBar = Platform.isMobile ? null : new StatusBar(this.addStatusBarItem(), () => this.sync("manual"));
@@ -58,9 +59,9 @@ export default class CumulusPlugin extends Plugin {
 			// Registered here so the burst of create events at startup is not seen as edits.
 			const edited = debounce(() => this.sync("edit"), EDIT_DELAY_MS, true);
 			const onChange = (file: TAbstractFile, oldPath?: string) => {
-				this.controller.markDirty(file.path);
-				if (oldPath) this.controller.markDirty(oldPath);
-				edited();
+				const changed = this.controller.markDirty(file.path);
+				const moved = oldPath ? this.controller.markDirty(oldPath) : false;
+				if (changed || moved) edited();
 			};
 			this.registerEvent(this.app.vault.on("create", onChange));
 			this.registerEvent(this.app.vault.on("modify", onChange));
@@ -77,6 +78,11 @@ export default class CumulusPlugin extends Plugin {
 			this.registerInterval(window.setInterval(() => this.sync("interval"), INTERVAL_MS));
 			this.sync("startup");
 		});
+	}
+
+	async onunload(): Promise<void> {
+		// an update through BRAT loads the new copy while this one may still be syncing
+		await this.controller?.stop();
 	}
 
 	pickFolder(onPicked: (folder: RemoteFolder) => void): Promise<void> {
@@ -107,7 +113,9 @@ export default class CumulusPlugin extends Plugin {
 		const entered = s.state !== this.lastState;
 		this.lastState = s.state;
 		if (!entered) return;
-		if (s.state === "error") new Notice(`Sync: ${s.message}`, 8000);
+		if (s.state === "error" && s.message !== this.lastError) new Notice(`Sync: ${s.message}`, 8000);
+		if (s.state === "error") this.lastError = s.message;
+		if (s.state === "idle") this.lastError = "";
 		if (s.state === "idle" && s.conflicts.length) {
 			const names = s.conflicts.map((p) => p.slice(p.lastIndexOf("/") + 1).replace(/\.md$/, ""));
 			const list = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ");

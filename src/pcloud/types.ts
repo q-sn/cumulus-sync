@@ -69,8 +69,19 @@ export class PCloudError extends Error {
 		return new PCloudError(w.code, w.message, w.class, w.retryable);
 	}
 
+	/** Connection trouble, timeouts, 5xx, captive portals: worth retrying later. */
 	static network(message: string, status = 0): PCloudError {
-		const retryable = status === 0 || status === 429 || status >= 500;
-		return new PCloudError(-status, message, "network", retryable);
+		return new PCloudError(-status, redact(message), "network", true);
 	}
+
+	static http(status: number): PCloudError {
+		if (status === 429) return new PCloudError(-status, "too many requests", "rateLimit", true);
+		if (status >= 500) return PCloudError.network(`HTTP ${status}`, status);
+		return new PCloudError(-status, `HTTP ${status}`, "client", false);
+	}
+}
+
+/** Error texts may quote request URLs, and those carry the token. */
+export function redact(text: string): string {
+	return text.replace(/(access_token|auth)=[^&\s"']+/gi, "$1=***");
 }

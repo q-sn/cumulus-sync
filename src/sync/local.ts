@@ -1,4 +1,4 @@
-import { type App, MarkdownView, normalizePath, TFile, TFolder } from "obsidian";
+import { type App, normalizePath, TextFileView, TFile, TFolder } from "obsidian";
 import type { LocalFile, LocalStat } from "./types";
 
 export async function sha1(data: ArrayBuffer): Promise<string> {
@@ -72,11 +72,28 @@ export class LocalVault {
 		return stat;
 	}
 
+	/** Always recoverable: system trash, or the vault's .trash where there is none. */
 	async trash(path: string): Promise<void> {
 		const f = this.file(path);
 		this.touched(path);
-		if (f) await this.app.fileManager.trashFile(f);
+		if (f) await this.app.vault.trash(f, true);
 		this.hashes.delete(path);
+	}
+
+	/** A conflict copy of `path` with exactly this content already exists. */
+	async hasCopy(path: string, hash: string): Promise<boolean> {
+		const name = path.slice(path.lastIndexOf("/") + 1);
+		const dot = name.lastIndexOf(".");
+		const stem = dot > 0 ? name.slice(0, dot) : name;
+		const dir = parentOf(path);
+		const prefix = `${dir ? `${dir}/` : ""}${stem} (conflict `;
+		for (const f of this.app.vault.getFiles()) {
+			if (!f.path.startsWith(prefix)) continue;
+			const cached = this.hashes.get(f.path);
+			const known = cached && cached.size === f.stat.size && cached.mtime === f.stat.mtime;
+			if ((known ? cached.sha1 : (await this.read(f.path)).sha1) === hash) return true;
+		}
+		return false;
 	}
 
 	/** Plain rename: links in other notes are left as they are on the other side too. */
@@ -109,7 +126,8 @@ export class LocalVault {
 		let dirty = false;
 		this.app.workspace.iterateAllLeaves((leaf) => {
 			const view = leaf.view;
-			if (view instanceof MarkdownView && view.file?.path === path && view.editor.getValue() !== view.data) {
+			// notes, canvases and other text views keep edits in memory for a moment
+			if (view instanceof TextFileView && view.file?.path === path && view.getViewData() !== view.data) {
 				dirty = true;
 			}
 		});

@@ -22,9 +22,17 @@ export type Action =
 	| { kind: "forget"; path: string }
 	| { kind: "renameLocal"; from: string; to: string; expect: LocalStat }
 	| { kind: "renameRemote"; from: string; to: string; expect: RemoteStat }
-	| { kind: "upload"; path: string; sha1: string | null; local: LocalStat; replace: RemoteStat | null }
+	| {
+			kind: "upload";
+			path: string;
+			/** pCloud's spelling when it differs from the local one (NFC vs NFD) */
+			remotePath?: string;
+			sha1: string | null;
+			local: LocalStat;
+			replace: RemoteStat | null;
+	  }
 	| { kind: "download"; path: string; remote: RemoteStat; replace: LocalStat | null }
-	| { kind: "conflict"; path: string; copy: string; local: LocalStat; remote: RemoteStat }
+	| { kind: "conflict"; path: string; remotePath?: string; copy: string; local: LocalStat; remote: RemoteStat }
 	| { kind: "deleteLocal"; path: string; expect: LocalStat }
 	| { kind: "deleteRemote"; path: string; expect: RemoteStat };
 
