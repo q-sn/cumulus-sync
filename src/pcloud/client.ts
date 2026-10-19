@@ -73,29 +73,33 @@ export class PCloudClient {
 		return parsed<DiffPage>(pcloudDiff, await this.diffRaw(diffid, limit));
 	}
 
+	createFolderRaw(parentId: string, name: string): Promise<string> {
+		return this.call("createfolderifnotexists", { folderid: parentId, name });
+	}
+
 	async createFolderIfNotExists(parentId: string, name: string): Promise<RemoteMetadata> {
-		const body = await this.call("createfolderifnotexists", { folderid: parentId, name });
-		return parsed<RemoteMetadata>(pcloudMetadata, body);
+		return parsed<RemoteMetadata>(pcloudMetadata, await this.createFolderRaw(parentId, name));
 	}
 
 	async upload(folderId: string, name: string, data: ArrayBuffer, mtimeSec?: number): Promise<RemoteMetadata> {
+		return parsed<RemoteMetadata>(pcloudUpload, await this.uploadRaw(folderId, name, data, mtimeSec));
+	}
+
+	uploadRaw(folderId: string, name: string, data: ArrayBuffer, mtimeSec?: number): Promise<string> {
 		const params: Params = {
 			folderid: folderId,
 			nopartial: 1,
 			mtime: mtimeSec,
 		};
-		let body: string;
 		if (this.uploadMode === "put") {
-			body = await this.call("uploadfile", { ...params, filename: name }, { method: "PUT", body: data });
-		} else {
-			const form = multipart(name, data);
-			body = await this.call("uploadfile", params, {
-				method: "POST",
-				body: form.body,
-				contentType: form.contentType,
-			});
+			return this.call("uploadfile", { ...params, filename: name }, { method: "PUT", body: data });
 		}
-		return parsed<RemoteMetadata>(pcloudUpload, body);
+		const form = multipart(name, data);
+		return this.call("uploadfile", params, {
+			method: "POST",
+			body: form.body,
+			contentType: form.contentType,
+		});
 	}
 
 	async download(fileId: string): Promise<ArrayBuffer> {
@@ -125,9 +129,12 @@ export class PCloudClient {
 		return parsed<RemoteMetadata>(pcloudMetadata, await this.call("deletefolder", { folderid: folderId }));
 	}
 
+	renameFileRaw(fileId: string, toFolderId: string, toName: string): Promise<string> {
+		return this.call("renamefile", { fileid: fileId, tofolderid: toFolderId, toname: toName });
+	}
+
 	async renameFile(fileId: string, toFolderId: string, toName: string): Promise<RemoteMetadata> {
-		const body = await this.call("renamefile", { fileid: fileId, tofolderid: toFolderId, toname: toName });
-		return parsed<RemoteMetadata>(pcloudMetadata, body);
+		return parsed<RemoteMetadata>(pcloudMetadata, await this.renameFileRaw(fileId, toFolderId, toName));
 	}
 
 	async renameFolder(folderId: string, toFolderId: string, toName: string): Promise<RemoteMetadata> {
