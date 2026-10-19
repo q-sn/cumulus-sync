@@ -82,21 +82,6 @@ They travel over HTTPS and are stored in pCloud as regular files. End-to-end enc
 
 Not in the first version. Optional sync for snippets, themes and hotkeys is planned. It will be opt-in, because some settings are meant to stay per device.
 
-## Roadmap
-
-- [x] Rust sync core compiled to WebAssembly, running on desktop and mobile
-- [x] pCloud API client, sign-in, EU and US regions
-- [x] Sync engine: two-way sync, conflict copies, safety checks
-- [x] First-sync preview, status bar, sync log
-- [ ] Testing on real devices
-- [ ] Public beta through BRAT
-- [ ] Rename detection and Markdown merging
-- [ ] Optional `.obsidian` sync
-- [ ] Large attachments on mobile
-- [ ] Release in the Obsidian community plugin directory
-
-Ideas and bug reports are welcome in [issues](https://github.com/Q-sn/cumulus-sync/issues).
-
 ## Privacy
 
 What the plugin does with your data, as required by the Obsidian developer policies:
