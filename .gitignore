@@ -8,3 +8,4 @@ data.json
 scripts/.out/
 spike-report.json
 docs/
+tests/.out/
