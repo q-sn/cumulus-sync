@@ -5,6 +5,7 @@
 # Cumulus: sync Obsidian with pCloud on Android, iOS and desktop
 
 [![Status](https://img.shields.io/badge/status-in%20development-8b5cf6)](https://github.com/Q-sn/cumulus-sync/releases)
+[![CI](https://github.com/Q-sn/cumulus-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/Q-sn/cumulus-sync/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS%20%7C%20Linux-3b82f6)
 ![Rust](https://img.shields.io/badge/core-Rust%20%2B%20WebAssembly-f97316)
