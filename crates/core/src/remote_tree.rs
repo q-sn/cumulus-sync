@@ -144,7 +144,9 @@ impl RemoteTree {
             }
         }
         // A folder listed above may have been dropped by a later event.
-        result.list_folders.retain(|id| self.folders.contains_key(id));
+        result
+            .list_folders
+            .retain(|id| self.folders.contains_key(id));
         result
     }
 
@@ -373,7 +375,10 @@ mod tests {
             DiffEvent::CreateFile(file(9, 999, "elsewhere.md", 1)),
         ]));
         assert_eq!(paths(&t), ["Sub/c.md", "a.md"]);
-        assert_eq!(t.files().iter().find(|(p, _)| p == "a.md").unwrap().1.hash, 101);
+        assert_eq!(
+            t.files().iter().find(|(p, _)| p == "a.md").unwrap().1.hash,
+            101
+        );
     }
 
     #[test]
@@ -400,7 +405,12 @@ mod tests {
     #[test]
     fn folder_rename_moves_children() {
         let mut t = tree();
-        t.apply(&page(vec![DiffEvent::ModifyFolder(folder(11, 10, "Renamed", vec![]))]));
+        t.apply(&page(vec![DiffEvent::ModifyFolder(folder(
+            11,
+            10,
+            "Renamed",
+            vec![],
+        ))]));
         assert_eq!(paths(&t), ["Renamed/b.md", "a.md"]);
     }
 
@@ -420,7 +430,12 @@ mod tests {
     #[test]
     fn folder_moved_out_drops_subtree() {
         let mut t = tree();
-        t.apply(&page(vec![DiffEvent::ModifyFolder(folder(11, 999, "Sub", vec![]))]));
+        t.apply(&page(vec![DiffEvent::ModifyFolder(folder(
+            11,
+            999,
+            "Sub",
+            vec![],
+        ))]));
         assert_eq!(paths(&t), ["a.md"]);
         assert!(t.folder_paths().is_empty());
     }
@@ -440,7 +455,15 @@ mod tests {
     fn reset_and_root_deletion() {
         let mut t = tree();
         assert!(t.apply(&page(vec![DiffEvent::Reset])).reset);
-        assert!(t.apply(&page(vec![DiffEvent::DeleteFolder(folder(10, 0, "Vault", vec![]))])).reset);
+        assert!(
+            t.apply(&page(vec![DiffEvent::DeleteFolder(folder(
+                10,
+                0,
+                "Vault",
+                vec![]
+            ))]))
+            .reset
+        );
     }
 
     #[test]

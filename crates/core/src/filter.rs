@@ -159,7 +159,10 @@ mod tests {
     #[test]
     fn builtin_and_config_dir() {
         let f = filter(&[]);
-        assert_eq!(f.skip_path(".obsidian/plugins/cumulus-sync/state.json"), Some(Skip::Builtin));
+        assert_eq!(
+            f.skip_path(".obsidian/plugins/cumulus-sync/state.json"),
+            Some(Skip::Builtin)
+        );
         assert_eq!(f.skip_path(".Obsidian/app.json"), Some(Skip::Builtin));
         assert_eq!(f.skip_path(".trash/old.md"), Some(Skip::Builtin));
         assert_eq!(f.skip_path("photos/Thumbs.db"), Some(Skip::Builtin));
