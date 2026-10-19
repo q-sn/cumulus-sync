@@ -91,7 +91,8 @@ export class PCloudClient {
 			nopartial: 1,
 			mtime: mtimeSec,
 		};
-		if (this.uploadMode === "put") {
+		// PUT with an empty body never gets a response from pCloud
+		if (this.uploadMode === "put" && data.byteLength > 0) {
 			return this.call("uploadfile", { ...params, filename: name }, { method: "PUT", body: data });
 		}
 		const form = multipart(name, data);

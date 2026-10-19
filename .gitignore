@@ -9,3 +9,4 @@ scripts/.out/
 spike-report.json
 docs/
 tests/.out/
+.pcloud-token*

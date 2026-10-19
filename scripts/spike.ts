@@ -152,11 +152,11 @@ async function main(): Promise<void> {
 			const nfd = "Café.md";
 			await putClient.upload(root.id, nfc, enc("nfc"));
 			await putClient.upload(root.id, nfd, enc("nfd"));
-			const names = ((await client.listFolder(root.id)).contents ?? [])
-				.map((m) => m.name)
-				.filter((n) => n.normalize("NFC") === nfc);
+			const all = ((await client.listFolder(root.id)).contents ?? []).map((m) => m.name);
+			const names = all.filter((n) => n.normalize("NFC") === nfc);
 			return {
 				detail: {
+					listed: all.length,
 					distinctEntries: names.length,
 					forms: names.map((n) => (n === nfc ? "NFC" : n === nfd ? "NFD" : "other")),
 				},
