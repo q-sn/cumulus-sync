@@ -1,0 +1,22 @@
+{
+  "name": "cumulus-sync",
+  "version": "0.0.1",
+  "description": "Two-way sync of your Obsidian vault with pCloud, desktop and mobile.",
+  "main": "main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build:wasm": "wasm-pack build crates/wasm --target web --release --out-dir pkg",
+    "dev": "npm run build:wasm && node esbuild.config.mjs",
+    "build": "npm run build:wasm && tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "test:rust": "cargo test",
+    "spike": "npm run build:wasm && node esbuild.config.mjs spike && node scripts/.out/spike.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.14.4",
+    "tslib": "^2.8.1",
+    "typescript": "^7.0.2"
+  }
+}

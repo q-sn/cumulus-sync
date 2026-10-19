@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Fmhty0HzgqBPudpbUDDHhdGb4eEnQkVY1dt+IHTqzyo='; style-src 'unsafe-inline'">
+<title>Cumulus · pCloud sign-in</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 32rem; margin: 3rem auto; padding: 0 16px; line-height: 1.5; }
+  a.button, button { display: inline-block; padding: .7rem 1.2rem; border-radius: .5rem; border: 0;
+    background: #6c5ce7; color: #fff; font-size: 1rem; text-decoration: none; cursor: pointer; }
+  code { display: block; word-break: break-all; padding: .6rem; border-radius: .4rem; background: rgba(127,127,127,.15); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>Cumulus</h1>
+<div id="ok" class="hidden">
+  <p>pCloud access granted. Return to Obsidian to finish connecting.</p>
+  <p><a id="open" class="button" href="#">Open Obsidian</a></p>
+  <p>If Obsidian does not open (common on Android), copy this code and paste it in
+     <em>Settings → Cumulus → Paste sign-in code</em>:</p>
+  <code id="code"></code>
+  <p><button id="copy" type="button">Copy code</button></p>
+  <p><small>This code grants access to your pCloud account. Do not share it.</small></p>
+</div>
+<div id="err" class="hidden"><p>Sign-in failed or was cancelled: <span id="reason"></span></p></div>
+<script>
+(function () {
+  var p = new URLSearchParams(location.hash.slice(1));
+  // drop the token from history
+  history.replaceState(null, "", location.pathname);
+  var token = p.get("access_token"), host = p.get("hostname"), state = p.get("state") || "";
+  if (!token || !host || !/^e?api\.pcloud\.com$/.test(host)) {
+    document.getElementById("reason").textContent = p.get("error") || "no token in the response";
+    document.getElementById("err").className = "";
+    return;
+  }
+  var q = new URLSearchParams({ access_token: token, hostname: host, state: state });
+  var link = "obsidian://cumulus-auth?" + q.toString();
+  var code = "cumulus1:" + host + ":" + token;
+  document.getElementById("open").href = link;
+  document.getElementById("code").textContent = code;
+  document.getElementById("copy").onclick = function () {
+    navigator.clipboard.writeText(code).then(function () {
+      document.getElementById("copy").textContent = "Copied";
+    });
+  };
+  document.getElementById("ok").className = "";
+  location.href = link;
+})();
+</script>
+</body>
+</html>
