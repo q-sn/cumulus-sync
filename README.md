@@ -4,7 +4,8 @@
 
 # Cumulus: sync Obsidian with pCloud on Android, iOS and desktop
 
-[![Release](https://img.shields.io/github/v/release/Q-sn/cumulus-sync?include_prereleases&label=release&color=8b5cf6)](https://github.com/Q-sn/cumulus-sync/releases)
+[![Obsidian plugin](https://img.shields.io/badge/Obsidian-community%20plugin-8b5cf6)](https://community.obsidian.md/plugins/cumulus-sync)
+[![Release](https://img.shields.io/github/v/release/Q-sn/cumulus-sync?label=release&color=8b5cf6)](https://github.com/Q-sn/cumulus-sync/releases)
 [![CI](https://github.com/Q-sn/cumulus-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/Q-sn/cumulus-sync/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS%20%7C%20Linux-3b82f6)
@@ -14,8 +15,7 @@ Cumulus is a free, open source Obsidian plugin that keeps your vault in sync wit
 
 Cumulus keeps a local copy of the vault on the phone or tablet and syncs it with pCloud in both directions. Your notes stay ordinary Markdown files in your own pCloud account, so pCloud Drive, the pCloud web app and any other editor keep working with them.
 
-> [!NOTE]
-> Cumulus is in beta and waiting for review for the Obsidian community plugin directory. Until it's listed, install it with BRAT (see below). ⭐ Star the repo to follow along.
+**[Install Cumulus from the Obsidian community plugin directory](https://community.obsidian.md/plugins/cumulus-sync)** ⭐ Star the repo if it saves you a headache.
 
 ## Features
 
@@ -45,13 +45,9 @@ Under the hood, Cumulus records the state of every file after each successful sy
 
 ## Installation
 
-Once Cumulus is in the community plugin directory: *Settings → Community plugins → Browse*, search for **Cumulus** and install it.
+In Obsidian, open *Settings → Community plugins → Browse*, search for **Cumulus** and install it. Or open the [plugin page](https://community.obsidian.md/plugins/cumulus-sync) and click *Add to Obsidian*.
 
-Until then, install the beta with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
-
-1. Install BRAT from *Settings → Community plugins*.
-2. In BRAT, choose *Add beta plugin* and enter `Q-sn/cumulus-sync`.
-3. Enable Cumulus, open its settings, tap *Connect* and choose your vault folder.
+Then enable Cumulus, open its settings, tap *Connect* and choose your vault folder.
 
 ## FAQ
 
