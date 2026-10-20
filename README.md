@@ -4,7 +4,7 @@
 
 # Cumulus: sync Obsidian with pCloud on Android, iOS and desktop
 
-[![Status](https://img.shields.io/badge/status-in%20development-8b5cf6)](https://github.com/Q-sn/cumulus-sync/releases)
+[![Release](https://img.shields.io/github/v/release/Q-sn/cumulus-sync?include_prereleases&label=release&color=8b5cf6)](https://github.com/Q-sn/cumulus-sync/releases)
 [![CI](https://github.com/Q-sn/cumulus-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/Q-sn/cumulus-sync/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS%20%7C%20Linux-3b82f6)
@@ -15,9 +15,11 @@ Cumulus is a free, open source Obsidian plugin that keeps your vault in sync wit
 Cumulus keeps a local copy of the vault on the phone or tablet and syncs it with pCloud in both directions. Your notes stay ordinary Markdown files in your own pCloud account, so pCloud Drive, the pCloud web app and any other editor keep working with them.
 
 > [!NOTE]
-> The plugin is in active development and there is no release yet. ⭐ Star the repo or use *Watch → Custom → Releases* to get notified when the first beta is out.
+> Cumulus is in beta and waiting for review for the Obsidian community plugin directory. Until it's listed, install it with BRAT (see below). ⭐ Star the repo to follow along.
 
 ## Features
+
+**Nothing to configure.** Sign in to pCloud, pick the folder with your vault, and that's it. No modes, no conflict settings, no schedules.
 
 **Two-way sync.** Changes made on the phone go up to pCloud. Changes made on the computer come down to the phone. Cumulus works out what changed on which side, so a sync never blindly overwrites one copy with the other.
 
@@ -43,13 +45,13 @@ Under the hood, Cumulus records the state of every file after each successful sy
 
 ## Installation
 
-Cumulus isn't in the Obsidian community plugin directory yet. Once the beta is out, you can install it with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
+Once Cumulus is in the community plugin directory: *Settings → Community plugins → Browse*, search for **Cumulus** and install it.
+
+Until then, install the beta with [BRAT](https://github.com/TfTHacker/obsidian42-brat):
 
 1. Install BRAT from *Settings → Community plugins*.
 2. In BRAT, choose *Add beta plugin* and enter `Q-sn/cumulus-sync`.
-3. Enable Cumulus and connect your pCloud account in its settings.
-
-The plugin will go to the official directory after the beta.
+3. Enable Cumulus, open its settings, tap *Connect* and choose your vault folder.
 
 ## FAQ
 
@@ -72,6 +74,10 @@ No. Android and iOS don't let Obsidian plugins run in the background. To make up
 ### What happens if I edit the same note on two devices?
 
 Nothing is lost. Your local version stays where it is, and the other version is saved next to it with "conflict" and the date in its name. Automatic merging of Markdown notes is planned.
+
+### Is there a file size limit?
+
+Files larger than 20 MB are skipped on phones and tablets, and larger than 200 MB on computers. Obsidian on mobile can't transfer bigger files reliably. Skipped files are left alone on both sides, never deleted.
 
 ### Are my notes encrypted?
 
