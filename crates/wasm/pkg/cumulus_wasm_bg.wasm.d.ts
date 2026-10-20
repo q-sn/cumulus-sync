@@ -1,5 +1,3 @@
-/* tslint:disable */
-/* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_engine_free: (a: number, b: number) => void;
 export const coreVersion: (a: number) => void;

@@ -13,7 +13,7 @@
     "spike": "npm run build:wasm && node esbuild.config.mjs spike && node scripts/.out/spike.mjs",
     "test": "node esbuild.config.mjs test && node --test tests/.out/sync.test.mjs",
     "version": "node scripts/version-bump.mjs && git add manifest.json versions.json",
-    "lint": "eslint src",
+    "lint": "eslint src crates/wasm/pkg",
     "check:wasm": "node scripts/wasm-hash.mjs check"
   },
   "devDependencies": {

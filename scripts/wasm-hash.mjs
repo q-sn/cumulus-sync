@@ -23,6 +23,12 @@ const digest = hash.digest("hex");
 if (process.argv[2] === "write") {
 	// wasm-pack drops a .gitignore with "*" into the package; the package is committed on purpose
 	rmSync("crates/wasm/pkg/.gitignore", { force: true });
+	// generated typings open with blanket lint switches, which Obsidian's review rejects
+	for (const f of readdirSync("crates/wasm/pkg").filter((n) => n.endsWith(".d.ts"))) {
+		const path = `crates/wasm/pkg/${f}`;
+		const text = readFileSync(path, "utf8");
+		writeFileSync(path, text.replace(/^\/\* (tslint:disable|eslint-disable) \*\/\r?\n/gm, ""));
+	}
 	writeFileSync(STAMP, `${digest}\n`);
 } else {
 	const stamped = readFileSync(STAMP, "utf8").trim();
