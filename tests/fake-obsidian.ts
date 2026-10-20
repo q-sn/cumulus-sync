@@ -172,7 +172,7 @@ export class FakeApp {
 	secrets = new Map<string, string>();
 	fileManager = {
 		trashFile: async (f: TAbstractFile) => {
-			this.vault.trash.push(f.path);
+			this.vault.trash_.push(f.path);
 			this.vault.files.delete(f.path);
 		},
 	};

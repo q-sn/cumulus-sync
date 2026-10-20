@@ -80,9 +80,9 @@ export default class CumulusPlugin extends Plugin {
 		});
 	}
 
-	async onunload(): Promise<void> {
+	onunload(): void {
 		// an update through BRAT loads the new copy while this one may still be syncing
-		await this.controller?.stop();
+		void this.controller?.stop();
 	}
 
 	pickFolder(onPicked: (folder: RemoteFolder) => void): Promise<void> {

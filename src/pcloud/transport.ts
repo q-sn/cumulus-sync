@@ -27,15 +27,15 @@ export class TimeoutError extends Error {
 export function withTimeout<T>(promise: Promise<T>, ms: number | undefined): Promise<T> {
 	if (!ms) return promise;
 	return new Promise<T>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new TimeoutError(ms)), ms);
+		const timer = window.setTimeout(() => reject(new TimeoutError(ms)), ms);
 		promise.then(
 			(v) => {
-				clearTimeout(timer);
+				window.clearTimeout(timer);
 				resolve(v);
 			},
 			(e: unknown) => {
-				clearTimeout(timer);
-				reject(e);
+				window.clearTimeout(timer);
+				reject(e instanceof Error ? e : new Error(String(e)));
 			},
 		);
 	});

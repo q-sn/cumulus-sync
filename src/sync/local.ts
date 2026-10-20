@@ -72,11 +72,11 @@ export class LocalVault {
 		return stat;
 	}
 
-	/** Always recoverable: system trash, or the vault's .trash where there is none. */
+	/** Follows the user's "Deleted files" setting, like deleting by hand. */
 	async trash(path: string): Promise<void> {
 		const f = this.file(path);
 		this.touched(path);
-		if (f) await this.app.vault.trash(f, true);
+		if (f) await this.app.fileManager.trashFile(f);
 		this.hashes.delete(path);
 	}
 

@@ -63,6 +63,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           flags=""
-          case "$GITHUB_REF_NAME" in 0.*|*-*) flags="--prerelease" ;; esac
+          # only tags like 1.2.0-beta.1 are pre-releases; Obsidian installs the regular ones
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css \
             --title "$GITHUB_REF_NAME" --generate-notes --verify-tag $flags

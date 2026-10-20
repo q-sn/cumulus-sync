@@ -11,6 +11,9 @@ import { StateStore } from "../src/sync/state";
 import { FakeApp } from "./fake-obsidian";
 import { FakePCloud } from "./fake-pcloud";
 
+// the plugin code uses window timers, as Obsidian asks
+(globalThis as { window?: unknown }).window ??= globalThis;
+
 const VAULT = "Notes/Vault";
 
 interface Phone {

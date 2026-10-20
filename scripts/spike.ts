@@ -6,6 +6,9 @@ import { PCloudClient } from "../src/pcloud/client";
 import type { Transport } from "../src/pcloud/transport";
 import { PCLOUD_HOSTS, PCloudError, type RemoteMetadata } from "../src/pcloud/types";
 
+// the plugin code uses window timers, as Obsidian asks
+(globalThis as { window?: unknown }).window ??= globalThis;
+
 const TIMEOUT_MS = 20_000;
 
 const fetchTransport: Transport = async (req) => {

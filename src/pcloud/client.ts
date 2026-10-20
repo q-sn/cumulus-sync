@@ -19,7 +19,7 @@ export interface ClientOptions {
 	sleep?: (ms: number) => Promise<void>;
 }
 
-const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const BASE_TIMEOUT_MS = 30_000;
 // slow mobile link, about 64 KB/s

@@ -47,7 +47,7 @@ export class CumulusSettingTab extends PluginSettingTab {
 					device.update({ email: null, folder: null });
 					if (!revoked) {
 						new Notice(
-							"Signed out here, but pCloud couldn't be reached to revoke access. You can remove it in pCloud under Settings, Security.",
+							"Signed out here, but pCloud couldn't be reached to revoke access. You can remove it in your pCloud account settings.",
 							10000,
 						);
 					}
