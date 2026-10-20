@@ -96,18 +96,20 @@ What the plugin does with your data, as required by the Obsidian developer polic
 - It needs a pCloud account.
 - A pCloud access token can't be limited to a single folder, so technically it gives access to the whole account. Cumulus only reads and writes the vault folder you choose.
 - The token is kept in Obsidian's secret storage on your device and is never written into the vault. *Disconnect* in the plugin settings signs the device out; you can also remove Cumulus's access any time in your pCloud account settings.
+- It lists the files in your vault and reads and writes them, which is what syncing needs. It never touches files outside the vault.
+- The clipboard is used only when you press *Copy* in the sync log.
 - It contains no telemetry or analytics.
 
 ## Building from source
 
-You'll need Rust with the `wasm32-unknown-unknown` target, [wasm-pack](https://rustwasm.github.io/wasm-pack/) and Node.js.
-
 ```bash
 npm install
-npm run build
+npm run build       # main.js from TypeScript and the committed wasm package
 npm run test:rust   # sync engine
 npm test            # end-to-end sync against an in-memory pCloud
 ```
+
+The compiled sync engine is committed in `crates/wasm/pkg`, so building the plugin needs only Node.js. After changing Rust code, rebuild it with `npm run build:wasm` (needs Rust with the `wasm32-unknown-unknown` target and [wasm-pack](https://rustwasm.github.io/wasm-pack/)) and commit the result; CI checks that it matches the sources.
 
 The sync logic lives in `crates/core`. It's plain Rust with no I/O, so it can be tested without Obsidian. The TypeScript code in `src/` handles files, network requests and the UI.
 

@@ -1,0 +1,36 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_engine_free: (a: number, b: number) => void;
+export const coreVersion: (a: number) => void;
+export const engine_applyDiff: (a: number, b: number, c: number, d: number) => void;
+export const engine_baseSize: (a: number) => number;
+export const engine_commitAdopt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const engine_commitDownload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const engine_commitRemoved: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+export const engine_commitRenameLocal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+export const engine_commitRenameRemote: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+export const engine_commitUpload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const engine_cursor: (a: number, b: number) => void;
+export const engine_hasRemote: (a: number) => number;
+export const engine_load: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const engine_mergeListing: (a: number, b: number, c: number, d: number) => void;
+export const engine_new: (a: number, b: number) => number;
+export const engine_noteFolder: (a: number, b: number, c: number, d: number) => void;
+export const engine_pendingListings: (a: number, b: number) => void;
+export const engine_plan: (a: number, b: number, c: number, d: number) => void;
+export const engine_remoteFolder: (a: number, b: number, c: number, d: number) => void;
+export const engine_remoteRoot: (a: number, b: number) => void;
+export const engine_resetRemote: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+export const engine_seq: (a: number) => number;
+export const engine_setFilter: (a: number, b: number, c: number, d: number) => void;
+export const engine_snapshot: (a: number, b: number) => void;
+export const pcloudChecksum: (a: number, b: number, c: number) => void;
+export const pcloudDiff: (a: number, b: number, c: number) => void;
+export const pcloudError: (a: number, b: number, c: number) => void;
+export const pcloudMetadata: (a: number, b: number, c: number) => void;
+export const pcloudUpload: (a: number, b: number, c: number) => void;
+export const __wbindgen_add_to_stack_pointer: (a: number) => number;
+export const __wbindgen_export: (a: number, b: number, c: number) => void;
+export const __wbindgen_export2: (a: number, b: number) => number;
+export const __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;

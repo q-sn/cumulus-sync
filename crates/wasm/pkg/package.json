@@ -1,0 +1,17 @@
+{
+  "name": "cumulus-wasm",
+  "type": "module",
+  "description": "WebAssembly bindings for cumulus-core",
+  "version": "0.0.1",
+  "license": "MIT",
+  "files": [
+    "cumulus_wasm_bg.wasm",
+    "cumulus_wasm.js",
+    "cumulus_wasm.d.ts"
+  ],
+  "main": "cumulus_wasm.js",
+  "types": "cumulus_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

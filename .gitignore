@@ -1,6 +1,5 @@
 node_modules/
 target/
-crates/wasm/pkg/
 main.js
 data.json
 *.map
