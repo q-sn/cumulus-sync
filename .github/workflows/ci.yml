@@ -29,9 +29,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run lint
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: npm test
+      # after the wasm build: lint needs its generated types
+      - run: npm run lint
       - run: npm run build
