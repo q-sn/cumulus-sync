@@ -1,6 +1,6 @@
 {
   "name": "cumulus-sync",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Two-way sync of your Obsidian vault with pCloud, desktop and mobile.",
   "main": "main.js",
   "private": true,
