@@ -1,5 +1,5 @@
 // pCloud app "Cumulus for Obsidian"
-export const PCLOUD_CLIENT_ID = "7Lmm7dSg2QS";
+export const PCLOUD_CLIENT_ID: string = "7Lmm7dSg2QS";
 
 export const AUTH_REDIRECT_URI = "https://q-sn.github.io/cumulus-sync/auth/";
 
